@@ -81,8 +81,8 @@ function startFfmpeg(session: TranscodeSession): void {
 
   child.stderr.on("data", (chunk) => {
     const text = chunk.toString();
-    if (/error|invalid|failed/i.test(text)) {
-      session.error = text.slice(-1000);
+    if (/error|invalid|failed|warning/i.test(text)) {
+      session.error = text.slice(-2000);
       session.updatedAt = new Date().toISOString();
     }
   });
@@ -121,6 +121,8 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     "-hide_banner",
     "-loglevel",
     "warning",
+    "-fflags",
+    "+genpts",
     "-reconnect",
     "1",
     "-reconnect_streamed",
@@ -133,6 +135,42 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     "0:v:0",
     "-map",
     "0:a:0?",
+    "-max_muxing_queue_size",
+    "2048"
+  ];
+
+  const videoFilters: string[] = [];
+  if (profile.width && profile.height) {
+    videoFilters.push(`scale=w=${profile.width}:h=${profile.height}:force_original_aspect_ratio=decrease`);
+  }
+
+  if (videoFilters.length > 0) {
+    args.push("-vf", videoFilters.join(","));
+  }
+
+  args.push(
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    session.quality === "auto" ? "22" : "23",
+    "-pix_fmt",
+    "yuv420p",
+    "-profile:v",
+    "high"
+  );
+
+  if (profile.videoBitrateKbps) {
+    args.push(
+      "-maxrate",
+      `${profile.videoBitrateKbps}k`,
+      "-bufsize",
+      `${Math.round(profile.videoBitrateKbps * 2)}k`
+    );
+  }
+
+  args.push(
     "-c:a",
     "aac",
     "-b:a",
@@ -147,30 +185,13 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     String(profile.hlsListSize),
     "-hls_flags",
     "delete_segments+append_list+independent_segments",
+    "-hls_segment_type",
+    "mpegts",
     "-hls_segment_filename",
-    join(session.outputDir, "segment_%05d.ts")
-  ];
+    join(session.outputDir, "segment_%05d.ts"),
+    session.playlistPath
+  );
 
-  if (session.quality === "auto") {
-    args.push("-c:v", "copy");
-  } else {
-    args.push(
-      "-vf",
-      `scale=w=${profile.width}:h=${profile.height}:force_original_aspect_ratio=decrease`,
-      "-c:v",
-      "libx264",
-      "-preset",
-      "veryfast",
-      "-crf",
-      "23",
-      "-maxrate",
-      `${profile.videoBitrateKbps}k`,
-      "-bufsize",
-      `${Math.round((profile.videoBitrateKbps ?? 1000) * 2)}k`
-    );
-  }
-
-  args.push(session.playlistPath);
   return args;
 }
 
