@@ -8,6 +8,7 @@ import { registerAdminRoutes } from "./admin/admin-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
+import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { addonManifest } from "./stremio/manifest.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
@@ -48,7 +49,7 @@ app.get<{
   }
 
   const bestOriginal = await findBestValidatedStream(params.data.type, params.data.id);
-  const requestBaseUrl = env.PUBLIC_BASE_URL ?? `${request.protocol}://${request.hostname}`;
+  const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`;
 
   return {
     streams: createVisibleStreamOptions(bestOriginal, requestBaseUrl)
