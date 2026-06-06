@@ -41,6 +41,7 @@
           <button class="nav-item" data-view="cache">Cache</button>
           <button class="nav-item" data-view="history">Historia</button>
           <button class="nav-item" data-view="diagnostics">Diagnostyka</button>
+          <button class="nav-item" data-view="system">System</button>
           <button class="nav-item" data-view="settings">Ustawienia</button>
           <button class="nav-item" data-view="security">Bezpieczeństwo</button>
         </nav>
@@ -125,6 +126,30 @@
           <article class="panel">
             <div class="panel-header"><h2>Wynik diagnostyki</h2></div>
             <pre id="diagnosticsOutput" class="code-box">Brak wyniku.</pre>
+          </article>
+        </section>
+
+        <section id="system" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Health-check techniczny</h2><button id="runHealthCheckBtn" class="ghost-btn">Uruchom test</button></div>
+            <div id="technicalHealth" class="table-wrap"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Log błędów</h2>
+              <div class="inline-actions">
+                <select id="logLevelFilter">
+                  <option value="">Wszystkie</option>
+                  <option value="error">Błędy</option>
+                  <option value="warn">Ostrzeżenia</option>
+                  <option value="info">Info</option>
+                  <option value="debug">Debug</option>
+                </select>
+                <button id="reloadLogsBtn" class="ghost-btn">Odśwież</button>
+                <button id="clearLogsBtn" class="danger-btn">Wyczyść</button>
+              </div>
+            </div>
+            <div id="systemLogs" class="table-wrap"></div>
           </article>
         </section>
 
