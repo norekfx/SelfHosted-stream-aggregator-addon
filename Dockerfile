@@ -17,5 +17,6 @@ RUN apt-get update \
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
+COPY public ./public
 EXPOSE 7000
 CMD ["node", "dist/server.js"]
