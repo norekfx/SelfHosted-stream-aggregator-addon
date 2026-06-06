@@ -37,6 +37,7 @@
         </div>
         <nav class="nav">
           <button class="nav-item active" data-view="dashboard">Dashboard</button>
+          <button class="nav-item" data-view="install">Instalacja</button>
           <button class="nav-item" data-view="addons">Addony</button>
           <button class="nav-item" data-view="cache">Cache</button>
           <button class="nav-item" data-view="history">Historia</button>
@@ -84,6 +85,25 @@
               <div id="settingsSummary" class="kv-list"></div>
             </article>
           </div>
+        </section>
+
+        <section id="install" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Instalacja w Stremio / Nuvio</h2><button id="copyManifestBtn" class="primary-btn">Kopiuj manifest</button></div>
+            <div class="install-card">
+              <span>URL manifestu</span>
+              <code id="manifestInstallUrl">-</code>
+            </div>
+            <div id="installChecklist" class="checklist"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-header"><h2>Szybki test playbacku</h2><button id="copyTestStreamBtn" class="ghost-btn">Kopiuj test stream</button></div>
+            <div class="install-card">
+              <span>Przykładowy endpoint streamów</span>
+              <code id="testStreamUrl">-</code>
+            </div>
+            <p>Ten URL pozwala szybko sprawdzić, czy zewnętrzny klient może pobrać listę streamów bez logowania do panelu.</p>
+          </article>
         </section>
 
         <section id="addons" class="view">
