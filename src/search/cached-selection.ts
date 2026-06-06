@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getAppSettings } from "../settings/app-settings.js";
 import { aggregateStreams } from "../streams/aggregation.js";
 import { saveSelectedOriginal } from "../streams/original-store.js";
@@ -107,5 +108,5 @@ function toAggregatedStream(type: StreamType, id: string, selectedOriginal: NonN
 }
 
 function createStableOriginalId(addonId: string, type: StreamType, id: string, originalUrl: string): string {
-  return Buffer.from(`${addonId}|${type}|${id}|${originalUrl}`).toString("base64url");
+  return createHash("sha256").update(`${addonId}|${type}|${id}|${originalUrl}`).digest("base64url").slice(0, 32);
 }
