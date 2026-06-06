@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { registerAdminRoutes } from "./admin/admin-routes.js";
+import { registerAuthRoutes, requireAdminAuth } from "./auth/auth-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
@@ -28,7 +29,8 @@ const app = Fastify({
 
 await app.register(cors, { origin: true });
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
-await app.register(registerAdminRoutes);
+await app.register(registerAuthRoutes);
+await app.register(registerAdminRoutes, { prefix: "", preHandler: requireAdminAuth });
 await app.register(registerTranscodeRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
