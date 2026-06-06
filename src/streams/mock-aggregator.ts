@@ -1,43 +1,11 @@
-import { aggregateStreams } from "./aggregation.js";
-import { saveSelectedOriginal } from "./original-store.js";
+import { getBestOriginalWithCache } from "../search/cached-selection.js";
 import type { AggregatedStream, StreamType } from "./types.js";
 
 /**
- * Selects exactly one validated source as Original.
- * All visible quality options are generated later as transcoding endpoints
- * based on this same original source, never as separate addon results.
+ * Returns the best validated Original.
+ * If a previous working result exists in SQLite, it is returned immediately
+ * and refreshed in the background. If no cache exists, this waits for a full refresh.
  */
 export async function findBestValidatedStream(type: StreamType, id: string): Promise<AggregatedStream | null> {
-  const aggregation = await aggregateStreams(type, id);
-  const selectedOriginal = aggregation.selectedOriginal;
-
-  if (!selectedOriginal) {
-    return null;
-  }
-
-  const originalUrl = selectedOriginal.url ?? selectedOriginal.externalUrl;
-  if (!originalUrl) {
-    return null;
-  }
-
-  const original: AggregatedStream = {
-    id: createStableOriginalId(selectedOriginal.addonId, type, id, originalUrl),
-    name: "Original",
-    title: selectedOriginal.title ?? selectedOriginal.name ?? "Selected original stream",
-    sourceAddon: selectedOriginal.addonName,
-    originalUrl,
-    quality: selectedOriginal.metadata.quality,
-    audioLanguage: selectedOriginal.metadata.audioLanguage,
-    subtitleLanguage: selectedOriginal.metadata.subtitleLanguage,
-    isValidated: true,
-    validationStatus: "working",
-    validationReason: selectedOriginal.scoreReasons.join("; ")
-  };
-
-  saveSelectedOriginal(original);
-  return original;
-}
-
-function createStableOriginalId(addonId: string, type: StreamType, id: string, originalUrl: string): string {
-  return Buffer.from(`${addonId}|${type}|${id}|${originalUrl}`).toString("base64url");
+  return getBestOriginalWithCache(type, id);
 }
