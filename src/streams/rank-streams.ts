@@ -55,13 +55,22 @@ export type RankedStream = RawAggregatedStream & {
   scoreReasons: string[];
 };
 
+export function rankCandidateStreams(
+  streams: RawAggregatedStream[],
+  preferences: StreamRankingPreferences
+): RankedStream[] {
+  return streams
+    .map((stream) => scoreStream(stream, preferences, stream.validation.status === "working"))
+    .sort((a, b) => b.score - a.score);
+}
+
 export function rankWorkingStreams(
   streams: RawAggregatedStream[],
   preferences: StreamRankingPreferences
 ): RankedStream[] {
   return streams
     .filter((stream) => stream.validation.status === "working")
-    .map((stream) => scoreStream(stream, preferences))
+    .map((stream) => scoreStream(stream, preferences, true))
     .sort((a, b) => b.score - a.score);
 }
 
@@ -72,12 +81,14 @@ export function selectBestOriginalStream(
   return rankWorkingStreams(streams, preferences)[0] ?? null;
 }
 
-function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPreferences): RankedStream {
+function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPreferences, includeWorkingBonus: boolean): RankedStream {
   let score = 0;
   const scoreReasons: string[] = [];
   const rawText = `${stream.name ?? ""} ${stream.title ?? ""} ${stream.description ?? ""} ${String(stream.behaviorHints?.filename ?? "")}`;
 
-  score += addScore(scoreReasons, "working", 10_000);
+  if (includeWorkingBonus) {
+    score += addScore(scoreReasons, "working", 10_000);
+  }
 
   const audioLanguage = stream.metadata.audioLanguage;
   if (audioLanguage === preferences.preferredAudioLanguage) {
