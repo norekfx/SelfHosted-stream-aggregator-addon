@@ -42,6 +42,7 @@
           <button class="nav-item" data-view="history">Historia</button>
           <button class="nav-item" data-view="diagnostics">Diagnostyka</button>
           <button class="nav-item" data-view="settings">Ustawienia</button>
+          <button class="nav-item" data-view="security">Bezpieczeństwo</button>
         </nav>
         <div class="sidebar-footer">
           <span class="status-dot"></span>
@@ -155,6 +156,27 @@
               <button class="primary-btn" type="submit">Zapisz ustawienia</button>
             </form>
           </article>
+        </section>
+
+        <section id="security" class="view">
+          <div class="panel-grid two">
+            <article class="panel">
+              <div class="panel-header"><h2>Zmiana hasła</h2></div>
+              <form id="changePasswordForm" class="settings-form single">
+                <label>Obecne hasło<input id="currentPassword" type="password" autocomplete="current-password" required /></label>
+                <label>Nowe hasło<input id="newPassword" type="password" autocomplete="new-password" minlength="10" required /></label>
+                <button class="primary-btn" type="submit">Zmień hasło</button>
+              </form>
+            </article>
+            <article class="panel">
+              <div class="panel-header"><h2>Aktywne sesje</h2><button id="reloadSessionsBtn" class="ghost-btn">Odśwież</button></div>
+              <div id="sessionsList" class="table-wrap"></div>
+              <div class="security-actions">
+                <button id="logoutOtherSessionsBtn" class="ghost-btn">Wyloguj inne sesje</button>
+                <button id="logoutAllSessionsBtn" class="danger-btn">Wyloguj wszystkie sesje</button>
+              </div>
+            </article>
+          </div>
         </section>
       </main>
     </div>
