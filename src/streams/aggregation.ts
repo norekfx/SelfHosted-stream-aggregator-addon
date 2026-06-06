@@ -1,6 +1,7 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
+import { env } from "../config/env.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
 import type { StreamValidationResult } from "./stream-validation.js";
@@ -88,6 +89,9 @@ async function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremio
     sources: stream.sources,
     behaviorHints: stream.behaviorHints,
     metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename }),
-    validation: await validateStream({ url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash })
+    validation: await validateStream(
+      { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
+      env.STREAM_VALIDATION_TIMEOUT_MS
+    )
   };
 }
