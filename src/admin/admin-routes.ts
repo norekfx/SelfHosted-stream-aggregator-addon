@@ -2,10 +2,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import { getAppSettings, updateAppSettings } from "../settings/app-settings.js";
+import { getAppSettings, getEffectivePublicBaseUrl, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
+import { saveSelectedOriginal } from "../streams/original-store.js";
+import type { AggregatedStream, StreamType } from "../streams/types.js";
+import { TRANSCODE_QUALITIES } from "../stremio/manifest.js";
 import { clearSystemLogs, listSystemLogs, type SystemLogLevel, writeSystemLog } from "../system/system-log.js";
 import { runTechnicalHealthCheck } from "../system/technical-health.js";
 
@@ -36,10 +39,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       if (b.code === "en") return 1;
       return a.nativeName.localeCompare(b.nativeName);
     });
-
-    return {
-      languages: languages.map((language) => ({ code: language.code, iso6392: language.iso6392, englishName: language.englishName, nativeName: language.nativeName, label: `${language.nativeName} / ${language.englishName}` }))
-    };
+    return { languages: languages.map((language) => ({ code: language.code, iso6392: language.iso6392, englishName: language.englishName, nativeName: language.nativeName, label: `${language.nativeName} / ${language.englishName}` })) };
   });
 
   app.patch("/admin/settings", async (request, reply) => {
@@ -63,7 +63,6 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.delete("/admin/system/logs", async () => { clearSystemLogs(); writeSystemLog("info", "logs", "System logs cleared."); return { ok: true }; });
-
   app.get("/admin/addons", async () => ({ addons: listAddons() }));
 
   app.post("/admin/addons", async (request, reply) => {
@@ -83,6 +82,37 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     writeSystemLog(result.selectedOriginal ? "info" : "warn", "diagnostics", "Aggregation diagnostics completed.", { type: result.type, id: result.id, streamCount: result.streamCount, workingStreamCount: result.workingStreamCount, failedStreamCount: result.failedStreamCount, unsupportedStreamCount: result.unsupportedStreamCount, selectedOriginal: result.selectedOriginal?.title });
     if (getAppSettings().showDiagnosticDetails) return result;
     return { type: result.type, id: result.id, searchedAt: result.searchedAt, addonCount: result.addonCount, successfulAddonCount: result.successfulAddonCount, failedAddonCount: result.failedAddonCount, streamCount: result.streamCount, workingStreamCount: result.workingStreamCount, failedStreamCount: result.failedStreamCount, unsupportedStreamCount: result.unsupportedStreamCount, selectedOriginal: result.selectedOriginal };
+  });
+
+  app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/transcode/candidates/:type/:id", async (request, reply) => {
+    const params = aggregateParamsSchema.safeParse(request.params);
+    if (!params.success) { reply.code(400); return { error: "Invalid transcode diagnostics parameters.", details: params.error.flatten() }; }
+    writeSystemLog("info", "transcode-diagnostics", "Transcode candidates scan started.", params.data);
+    const result = await aggregateStreams(params.data.type, params.data.id);
+    const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`;
+    const candidates = result.rankedStreams.slice(0, 50).map((stream) => {
+      const original = toDiagnosticAggregatedStream(params.data.type, params.data.id, stream);
+      saveSelectedOriginal(original);
+      const encodedId = encodeURIComponent(original.id);
+      return {
+        id: original.id,
+        title: original.title,
+        addon: original.sourceAddon,
+        originalUrl: original.originalUrl,
+        quality: original.quality,
+        audioLanguage: original.audioLanguage,
+        subtitleLanguage: original.subtitleLanguage,
+        validationReason: original.validationReason,
+        score: stream.score,
+        scoreReasons: stream.scoreReasons,
+        urls: {
+          original: original.originalUrl,
+          ...Object.fromEntries(TRANSCODE_QUALITIES.map((quality) => [quality, `${requestBaseUrl}/transcode/${encodedId}/${quality}/master.m3u8`]))
+        }
+      };
+    });
+    writeSystemLog("info", "transcode-diagnostics", "Transcode candidates scan completed.", { ...params.data, candidates: candidates.length, workingStreamCount: result.workingStreamCount });
+    return { type: params.data.type, id: params.data.id, candidates };
   });
 
   app.get<{ Querystring: { limit?: string } }>("/admin/cache", async (request, reply) => {
@@ -153,4 +183,25 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon health-check completed.", { id: addon.id, name: addon.name, status: addon.status, responseTimeMs: addon.responseTimeMs, lastError: addon.lastError });
     return { addon };
   });
+}
+
+function toDiagnosticAggregatedStream(type: StreamType, id: string, stream: any): AggregatedStream {
+  const originalUrl = stream.url ?? stream.externalUrl ?? "";
+  return {
+    id: createStableOriginalId(stream.addonId, type, id, originalUrl),
+    name: "Original",
+    title: stream.title ?? stream.name ?? "Diagnostic stream",
+    sourceAddon: stream.addonName,
+    originalUrl,
+    quality: stream.metadata?.quality,
+    audioLanguage: stream.metadata?.audioLanguage,
+    subtitleLanguage: stream.metadata?.subtitleLanguage,
+    isValidated: true,
+    validationStatus: "working",
+    validationReason: Array.isArray(stream.scoreReasons) ? stream.scoreReasons.join("; ") : undefined
+  };
+}
+
+function createStableOriginalId(addonId: string, type: StreamType, id: string, originalUrl: string): string {
+  return Buffer.from(`${addonId}|${type}|${id}|${originalUrl}`).toString("base64url");
 }
