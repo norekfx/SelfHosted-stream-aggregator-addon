@@ -333,7 +333,7 @@ function renderCache() {
   ]));
 
   $$('[data-refresh-cache]').forEach((button) => button.addEventListener('click', async () => {
-    const [type, id] = button.dataset.refreshCache.split(':');
+    const { type, id } = parseTypedMediaId(button.dataset.refreshCache);
     await api(`/admin/cache/${type}/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
     toast('Cache odświeżony.');
     await loadCache();
@@ -445,6 +445,18 @@ function formatStats(stats = {}) {
 function formatDate(value) {
   if (!value) return '-';
   return new Date(value).toLocaleString();
+}
+
+function parseTypedMediaId(value = '') {
+  const separatorIndex = value.indexOf(':');
+  if (separatorIndex === -1) {
+    return { type: value, id: '' };
+  }
+
+  return {
+    type: value.slice(0, separatorIndex),
+    id: value.slice(separatorIndex + 1)
+  };
 }
 
 function toast(message) {
