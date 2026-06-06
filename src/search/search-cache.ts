@@ -21,6 +21,23 @@ type SearchCacheRow = {
   refresh_error: string | null;
 };
 
+type SearchHistoryRow = {
+  id: string;
+  cache_key: string;
+  type: StreamType;
+  media_id: string;
+  searched_at: string;
+  addon_count: number;
+  successful_addon_count: number;
+  failed_addon_count: number;
+  stream_count: number;
+  working_stream_count: number;
+  failed_stream_count: number;
+  unsupported_stream_count: number;
+  selected_original_json: string | null;
+  result_json: string;
+};
+
 export type CachedSearchResult = {
   cacheKey: string;
   type: StreamType;
@@ -37,6 +54,22 @@ export type CachedSearchResult = {
   refreshError?: string;
 };
 
+export type SearchHistoryEntry = {
+  id: string;
+  cacheKey: string;
+  type: StreamType;
+  mediaId: string;
+  searchedAt: string;
+  addonCount: number;
+  successfulAddonCount: number;
+  failedAddonCount: number;
+  streamCount: number;
+  workingStreamCount: number;
+  failedStreamCount: number;
+  unsupportedStreamCount: number;
+  selectedOriginal: AggregatedStream | null;
+};
+
 export function createCacheKey(type: StreamType, mediaId: string): string {
   return `${type}:${mediaId}`;
 }
@@ -48,6 +81,22 @@ export function getCachedSearchResult(type: StreamType, mediaId: string): Cached
     .get(cacheKey) as SearchCacheRow | undefined;
 
   return row ? mapCacheRow(row) : undefined;
+}
+
+export function listCachedSearchResults(limit = 50): CachedSearchResult[] {
+  const rows = getDatabase()
+    .prepare("SELECT * FROM search_cache ORDER BY updated_at DESC LIMIT ?")
+    .all(limit) as SearchCacheRow[];
+
+  return rows.map(mapCacheRow);
+}
+
+export function listSearchHistory(limit = 50): SearchHistoryEntry[] {
+  const rows = getDatabase()
+    .prepare("SELECT * FROM search_history ORDER BY searched_at DESC LIMIT ?")
+    .all(limit) as SearchHistoryRow[];
+
+  return rows.map(mapHistoryRow);
 }
 
 export function markCacheServed(type: StreamType, mediaId: string): void {
@@ -185,7 +234,7 @@ function mapCacheRow(row: SearchCacheRow): CachedSearchResult {
     cacheKey: row.cache_key,
     type: row.type,
     mediaId: row.media_id,
-    selectedOriginal: row.selected_original_json ? safeParse<AggregatedStream>(row.selected_original_json, null) : null,
+    selectedOriginal: row.selected_original_json ? safeParse<AggregatedStream | null>(row.selected_original_json, null) : null,
     rankedStreams: safeParse<unknown[]>(row.ranked_streams_json, []),
     stats: safeParse<Record<string, unknown>>(row.stats_json, {}),
     status: row.status,
@@ -195,6 +244,24 @@ function mapCacheRow(row: SearchCacheRow): CachedSearchResult {
     refreshStartedAt: row.refresh_started_at ?? undefined,
     refreshFinishedAt: row.refresh_finished_at ?? undefined,
     refreshError: row.refresh_error ?? undefined
+  };
+}
+
+function mapHistoryRow(row: SearchHistoryRow): SearchHistoryEntry {
+  return {
+    id: row.id,
+    cacheKey: row.cache_key,
+    type: row.type,
+    mediaId: row.media_id,
+    searchedAt: row.searched_at,
+    addonCount: row.addon_count,
+    successfulAddonCount: row.successful_addon_count,
+    failedAddonCount: row.failed_addon_count,
+    streamCount: row.stream_count,
+    workingStreamCount: row.working_stream_count,
+    failedStreamCount: row.failed_stream_count,
+    unsupportedStreamCount: row.unsupported_stream_count,
+    selectedOriginal: row.selected_original_json ? safeParse<AggregatedStream | null>(row.selected_original_json, null) : null
   };
 }
 
