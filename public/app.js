@@ -5,7 +5,8 @@ const state = {
   addons: [],
   cache: [],
   history: [],
-  settings: {}
+  settings: {},
+  sessions: []
 };
 
 const titles = {
@@ -14,7 +15,8 @@ const titles = {
   cache: ['Cache', 'Zapamiętane działające wyniki dla szybkiego ponownego odtwarzania.'],
   history: ['Historia', 'Pełna historia sprawdzania i wyboru plików.'],
   diagnostics: ['Diagnostyka', 'Ręczne testowanie agregacji dla filmu lub odcinka.'],
-  settings: ['Ustawienia', 'Opcje ułatwiające codzienne używanie i dopasowanie do serwera.']
+  settings: ['Ustawienia', 'Opcje ułatwiające codzienne używanie i dopasowanie do serwera.'],
+  security: ['Bezpieczeństwo', 'Hasło administratora, aktywne sesje i wylogowanie urządzeń.']
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -73,7 +75,10 @@ function bindNavigation() {
 
   $('#refreshBtn').addEventListener('click', refreshCurrentView);
   $('#reloadCacheBtn').addEventListener('click', loadCache);
+  $('#reloadSessionsBtn').addEventListener('click', loadSessions);
   $('#logoutBtn').addEventListener('click', logout);
+  $('#logoutOtherSessionsBtn').addEventListener('click', logoutOtherSessions);
+  $('#logoutAllSessionsBtn').addEventListener('click', logoutAllSessions);
 }
 
 function bindForms() {
@@ -126,19 +131,50 @@ function bindForms() {
     renderSettings();
     toast('Ustawienia zapisane.');
   });
+
+  $('#changePasswordForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await api('/auth/change-password', {
+      method: 'POST',
+      body: {
+        currentPassword: $('#currentPassword').value,
+        newPassword: $('#newPassword').value
+      }
+    });
+    $('#currentPassword').value = '';
+    $('#newPassword').value = '';
+    toast('Hasło zmienione.');
+  });
 }
 
 async function logout() {
   await api('/auth/logout', { method: 'POST' });
+  resetPrivateState();
+  showAuth(false);
+}
+
+async function logoutOtherSessions() {
+  await api('/auth/logout-other-sessions', { method: 'POST' });
+  toast('Inne sesje zostały wylogowane.');
+  await loadSessions();
+}
+
+async function logoutAllSessions() {
+  await api('/auth/logout-all-sessions', { method: 'POST' });
+  resetPrivateState();
+  showAuth(false);
+}
+
+function resetPrivateState() {
   state.user = null;
   state.addons = [];
   state.cache = [];
   state.history = [];
-  showAuth(false);
+  state.sessions = [];
 }
 
 async function loadAll() {
-  await Promise.allSettled([checkHealth(), loadSettings(), loadAddons(), loadCache(), loadHistory()]);
+  await Promise.allSettled([checkHealth(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions()]);
   renderDashboard();
 }
 
@@ -148,6 +184,7 @@ async function refreshCurrentView() {
   if (state.view === 'cache') await loadCache();
   if (state.view === 'history') await loadHistory();
   if (state.view === 'settings') await loadSettings();
+  if (state.view === 'security') await loadSessions();
 }
 
 async function checkHealth() {
@@ -187,6 +224,12 @@ async function loadHistory() {
   state.history = data.history ?? [];
   renderHistory();
   renderDashboard();
+}
+
+async function loadSessions() {
+  const data = await api('/auth/sessions');
+  state.sessions = data.sessions ?? [];
+  renderSessions();
 }
 
 function renderDashboard() {
@@ -279,6 +322,20 @@ function renderHistory() {
     item.workingStreamCount,
     item.failedStreamCount,
     escapeHtml(item.selectedOriginal?.title ?? '-')
+  ]));
+}
+
+function renderSessions() {
+  if (!state.sessions.length) {
+    $('#sessionsList').innerHTML = '<div class="list empty">Brak aktywnych sesji.</div>';
+    return;
+  }
+
+  $('#sessionsList').innerHTML = table(['Sesja', 'Utworzona', 'Ostatnio widziana', 'Wygasa'], state.sessions.map((session) => [
+    session.isCurrent ? badge('current') : escapeHtml(session.id.slice(0, 8)),
+    escapeHtml(formatDate(session.createdAt)),
+    escapeHtml(formatDate(session.lastSeenAt)),
+    escapeHtml(formatDate(session.expiresAt))
   ]));
 }
 
