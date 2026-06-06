@@ -73,6 +73,146 @@ function installLogLevelMemory() {
   });
 }
 
+function installSystemTranscodePanel() {
+  const system = document.getElementById("system");
+  if (!system || document.getElementById("systemTranscodePanel")) return;
+
+  const healthPanel = document.getElementById("technicalHealth")?.closest("article");
+  const panel = document.createElement("article");
+  panel.id = "systemTranscodePanel";
+  panel.className = "panel";
+  panel.innerHTML = `
+    <div class="panel-header">
+      <h2>Transkodowanie</h2>
+      <div class="inline-actions">
+        <span id="systemTranscodeBadge" class="badge">oczekiwanie</span>
+        <button id="stopSystemTranscodeBtn" class="danger-btn" type="button" disabled>Zatrzymaj</button>
+      </div>
+    </div>
+    <div id="systemTranscodeStatus" class="list empty">Brak danych o transkodowaniu.</div>
+    <div id="systemTranscodeHistory" class="table-wrap"></div>
+  `;
+
+  if (healthPanel?.nextSibling) {
+    system.insertBefore(panel, healthPanel.nextSibling);
+  } else {
+    system.prepend(panel);
+  }
+
+  document.getElementById("stopSystemTranscodeBtn")?.addEventListener("click", stopActiveSystemTranscode);
+  refreshSystemTranscodePanel();
+}
+
+async function refreshSystemTranscodePanel() {
+  const panel = document.getElementById("systemTranscodePanel");
+  if (!panel) return;
+
+  try {
+    const response = await originalFetch("/transcode/sessions");
+    const data = await response.json();
+    renderSystemTranscodePanel(data.sessions ?? []);
+  } catch {
+    const status = document.getElementById("systemTranscodeStatus");
+    if (status) {
+      status.classList.add("empty");
+      status.textContent = "Nie udało się pobrać statusu transkodowania.";
+    }
+  }
+}
+
+function renderSystemTranscodePanel(sessions) {
+  const active = sessions.find((session) => ["starting", "running"].includes(session.status));
+  const lastThree = sessions.slice(0, 3);
+  const badge = document.getElementById("systemTranscodeBadge");
+  const stopButton = document.getElementById("stopSystemTranscodeBtn");
+  const status = document.getElementById("systemTranscodeStatus");
+  const history = document.getElementById("systemTranscodeHistory");
+  if (!badge || !stopButton || !status || !history) return;
+
+  const representative = active ?? lastThree[0];
+  badge.className = `badge ${representative?.status ?? "idle"}`;
+  badge.textContent = getTranscodePanelLabel(representative?.status);
+  stopButton.disabled = !active;
+  stopButton.dataset.sessionId = active?.id ?? "";
+
+  if (!representative) {
+    status.classList.add("empty");
+    status.textContent = "Oczekiwanie — nie było jeszcze transkodowania.";
+    history.innerHTML = "";
+    return;
+  }
+
+  status.classList.remove("empty");
+  status.innerHTML = renderTranscodeSummary(representative, active ? "Obecnie" : "Ostatnio");
+  history.innerHTML = lastThree.length ? renderTranscodeHistoryTable(lastThree) : "";
+}
+
+function getTranscodePanelLabel(status) {
+  if (status === "running" || status === "starting") return "🔄 transkoduje...";
+  if (status === "exited") return "⏹ zatrzymano";
+  if (status === "failed") return "⚠️ błąd";
+  return "⏳ oczekiwanie";
+}
+
+function renderTranscodeSummary(session, prefix) {
+  const profile = session.profile ?? {};
+  const stats = session.speedStats ?? {};
+  const bitrate = profile.videoBitrateKbps ? `${profile.videoBitrateKbps} kbps` : (session.progress?.bitrate ?? "auto");
+  return `
+    <div class="kv-list">
+      <div class="kv"><span>${escapeTranscodeHtml(prefix) + " transkodowane"}</span><strong>${escapeTranscodeHtml(session.title || session.streamId || "-")}</strong></div>
+      <div class="kv"><span>Źródło</span><strong>${escapeTranscodeHtml([session.sourceQuality, session.sourceAddon].filter(Boolean).join(" / ") || "-")}</strong></div>
+      <div class="kv"><span>Cel</span><strong>${escapeTranscodeHtml(session.quality)} | ${escapeTranscodeHtml(bitrate)} | CRF ${escapeTranscodeHtml(profile.crf ?? "-")} | ${escapeTranscodeHtml(profile.preset ?? "-")}</strong></div>
+      <div class="kv"><span>Prędkość</span><strong>avg ${formatTranscodeSpeed(stats.average)} / min ${formatTranscodeSpeed(stats.min)} / max ${formatTranscodeSpeed(stats.max)}</strong></div>
+      <div class="kv"><span>Postęp</span><strong>${escapeTranscodeHtml(session.progress?.outTime ?? "-")} | ${escapeTranscodeHtml(session.progress?.speed ?? "-")} | bufor ${escapeTranscodeHtml(session.buffer?.estimatedSeconds ?? 0)}s</strong></div>
+    </div>
+  `;
+}
+
+function renderTranscodeHistoryTable(sessions) {
+  const rows = sessions.map((session) => {
+    const profile = session.profile ?? {};
+    const stats = session.speedStats ?? {};
+    const bitrate = profile.videoBitrateKbps ? `${profile.videoBitrateKbps} kbps` : (session.progress?.bitrate ?? "auto");
+    return `<tr>
+      <td>${escapeTranscodeHtml(new Date(session.startedAt).toLocaleString())}<br>${getTranscodePanelLabel(session.status)}</td>
+      <td><strong>${escapeTranscodeHtml(session.title || session.streamId || "-")}</strong><br><small>${escapeTranscodeHtml([session.sourceQuality, session.sourceAddon].filter(Boolean).join(" / ") || "-")}</small></td>
+      <td>${escapeTranscodeHtml(session.quality)}<br><small>${escapeTranscodeHtml(bitrate)} | CRF ${escapeTranscodeHtml(profile.crf ?? "-")} | ${escapeTranscodeHtml(profile.preset ?? "-")}</small></td>
+      <td>avg ${formatTranscodeSpeed(stats.average)}<br><small>min ${formatTranscodeSpeed(stats.min)} / max ${formatTranscodeSpeed(stats.max)}</small></td>
+    </tr>`;
+  }).join("");
+
+  return `<table><thead><tr><th>Status</th><th>Plik</th><th>Profil</th><th>Prędkość</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function stopActiveSystemTranscode() {
+  const button = document.getElementById("stopSystemTranscodeBtn");
+  const sessionId = button?.dataset.sessionId;
+  if (!button || !sessionId) return;
+
+  const old = button.textContent;
+  button.disabled = true;
+  button.textContent = "Zatrzymuję...";
+  try {
+    const response = await originalFetch(`/transcode/sessions/${encodeURIComponent(sessionId)}/stop`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    showVodToast("Zatrzymano aktywne transkodowanie.");
+  } catch {
+    showVodToast("Nie udało się zatrzymać transkodowania.");
+  } finally {
+    button.textContent = old;
+    refreshSystemTranscodePanel();
+  }
+}
+
+function formatTranscodeSpeed(value) {
+  return Number.isFinite(value) ? `${value.toFixed(2)}x` : "-";
+}
+
+function escapeTranscodeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+}
+
 function installDiagnosticVodUi() {
   const modeSelect = document.getElementById("transcodeModeSelect");
   if (!modeSelect || document.getElementById("transcodePlaybackModeSelect")) return;
@@ -155,6 +295,7 @@ function showVodToast(message) {
 }
 
 installLogLevelMemory();
+installSystemTranscodePanel();
 
 setInterval(() => {
   const form = document.getElementById("settingsForm");
@@ -167,5 +308,7 @@ setInterval(() => {
   }
 
   installLogLevelMemory();
+  installSystemTranscodePanel();
   installDiagnosticVodUi();
+  if (document.getElementById("systemTranscodePanel")) refreshSystemTranscodePanel();
 }, 1000);
