@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { z } from "zod";
+import { registerAdminRoutes } from "./admin/admin-routes.js";
 import { addonManifest } from "./stremio/manifest.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
@@ -19,6 +20,7 @@ const app = Fastify({
 });
 
 await app.register(cors, { origin: true });
+await app.register(registerAdminRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
 
