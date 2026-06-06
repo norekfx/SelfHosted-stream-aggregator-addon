@@ -15,6 +15,7 @@ import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
 import { registerTranscodeRoutes } from "./transcoding/transcode-routes.js";
+import { registerTranscodeVodRoutes } from "./transcoding/transcode-vod-routes.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, "../public");
@@ -35,6 +36,7 @@ await app.register(async (adminApp) => {
   await registerAdminRoutes(adminApp);
 });
 await app.register(registerTranscodeRoutes);
+await app.register(registerTranscodeVodRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
 
