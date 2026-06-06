@@ -12,14 +12,15 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 - `GET /admin/addons` - list configured external addons.
 - `POST /admin/addons` - register an external addon by manifest URL.
 - `POST /admin/addons/:addonId/check` - manually refresh addon health.
-- `GET /admin/aggregate/:type/:id` - diagnostic aggregation endpoint with normalized metadata for raw external addon results.
+- `GET /admin/aggregate/:type/:id` - diagnostic aggregation endpoint with normalized metadata and validation results for raw external addon results.
 - SQLite persistence for registered addons at `/data/db/aggregator.sqlite` by default.
 - European language registry with Polish as the default preferred audio/subtitle language.
 - Stream metadata parser for quality, release source, codec, size, audio kind, audio language and subtitle language.
+- HTTP stream validator using `HEAD`, fallback `Range` GET, timeout, HTTP status, content type, content length and range support.
 - Simplified visible stream options: `Original`, `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`.
 - Docker and Docker Compose files for TrueNAS Scale-style self-hosting.
 
-The stream endpoint currently runs aggregation but returns no streams until validation, ranking and transcoding readiness checks are implemented. This is intentional: the project should not show Stremio links unless the original stream and transcoded variants can be trusted to work.
+The stream endpoint currently runs aggregation and validation but returns no streams until ranking and transcoding readiness checks are implemented. This is intentional: the project should not show Stremio links unless the original stream and transcoded variants can be trusted to work.
 
 ## Development
 
@@ -73,6 +74,13 @@ docker compose up --build
 
 For TrueNAS deployment, persist `/data` on a dataset/volume. The default SQLite path is `/data/db/aggregator.sqlite`, and future cache/log paths will also live under `/data`.
 
+Useful environment variables:
+
+```text
+PUBLIC_BASE_URL=https://streams.example.com
+STREAM_VALIDATION_TIMEOUT_MS=10000
+```
+
 Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BASE_URL` to the public HTTPS domain.
 
 ## Milestones
@@ -81,7 +89,7 @@ Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BAS
 2. Add persistent storage: SQLite plus cache directory for transcode/session metadata. **Started.**
 3. Implement real stream aggregation from configured addons. **Started.**
 4. Normalize results: quality, size, release group, language, subtitles, source addon. **Started.**
-5. Validate streams before exposing them: `HEAD`, partial `GET`, timeout handling, `ffprobe` where possible.
+5. Validate streams before exposing them: `HEAD`, partial `GET`, timeout handling, `ffprobe` where possible. **Started.**
 6. Select best original stream using preferred European audio/subtitle language rules.
 7. Add FFmpeg HLS transcoding sessions for `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`.
 8. Add admin web UI: addon management, status, search history, validation logs and selected file history.
