@@ -1,11 +1,11 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
-import { getAppSettings, getEffectiveStreamValidationTimeoutMs } from "../settings/app-settings.js";
+import { getAppSettings, getEffectiveLinkValidationMode, getEffectiveStreamValidationTimeoutMs, type LinkValidationMode } from "../settings/app-settings.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
-import { rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
+import { rankCandidateStreams, rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
-import type { StreamValidationResult } from "./stream-validation.js";
+import { notChecked, type StreamValidationResult } from "./stream-validation.js";
 import type { StreamType } from "./types.js";
 import { validateStream } from "./validate-stream-url.js";
 
@@ -68,9 +68,8 @@ export async function aggregateStreams(
     result.streams.map((stream) => ({ addon: result.addon, stream }))
   );
 
-  const streams = await Promise.all(
-    rawStreams.map(({ addon, stream }) => mapExternalStream(addon, stream))
-  );
+  const streams = rawStreams.map(({ addon, stream }) => mapExternalStream(addon, stream));
+  await validateStreamsByMode(streams, rankingPreferences, getEffectiveLinkValidationMode(), getEffectiveStreamValidationTimeoutMs());
 
   const rankedStreams = rankWorkingStreams(streams, rankingPreferences);
   const selectedOriginal = selectBestOriginalStream(streams, rankingPreferences);
@@ -98,7 +97,7 @@ function isStreamAddonEnabled(addon: RegisteredAddon): boolean {
   return addon.enabled && addon.status === "online" && addon.supportedResources.includes("stream");
 }
 
-async function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream): Promise<RawAggregatedStream> {
+function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream): RawAggregatedStream {
   const filename = typeof stream.behaviorHints?.filename === "string" ? stream.behaviorHints.filename : undefined;
 
   return {
@@ -114,9 +113,38 @@ async function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremio
     sources: stream.sources,
     behaviorHints: stream.behaviorHints,
     metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename, description: stream.description }),
-    validation: await validateStream(
-      { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
-      getEffectiveStreamValidationTimeoutMs()
-    )
+    validation: notChecked()
   };
+}
+
+async function validateStreamsByMode(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string }, mode: LinkValidationMode, timeoutMs: number): Promise<void> {
+  const ordered = rankCandidateStreams(streams, preferences);
+  const limit = getValidationLimit(mode, ordered.length);
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const stream = ordered[index];
+    if (index >= limit) {
+      stream.validation = notChecked("Link was outside the selected validation limit.");
+      continue;
+    }
+
+    stream.validation = await validateStream(
+      { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
+      timeoutMs
+    );
+
+    if (mode === "best" && stream.validation.status === "working") {
+      for (const skipped of ordered.slice(index + 1)) {
+        skipped.validation = notChecked("Skipped because best working link was already found.");
+      }
+      break;
+    }
+  }
+}
+
+function getValidationLimit(mode: LinkValidationMode, total: number): number {
+  if (mode === "all") return total;
+  if (mode === "best") return total;
+  const parsed = Number.parseInt(mode, 10);
+  return Number.isFinite(parsed) ? Math.min(parsed, total) : total;
 }
