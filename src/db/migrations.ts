@@ -110,6 +110,24 @@ const migrations: Array<{ id: number; name: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_hash ON admin_sessions(token_hash);
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at ON admin_sessions(expires_at);
     `
+  },
+  {
+    id: 5,
+    name: "create_system_logs",
+    sql: `
+      CREATE TABLE IF NOT EXISTS system_logs (
+        id TEXT PRIMARY KEY,
+        level TEXT NOT NULL,
+        source TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details_json TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at);
+      CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level);
+      CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source);
+    `
   }
 ];
 
