@@ -34,7 +34,7 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 
 Important playback rule: `Original` is the original selected file. All quality options such as `Auto`, `4K`, `1080p` and `720p` are server-side transcodes generated from that same selected original, not separate streams from different addons.
 
-The stream endpoint uses the stored working result immediately when available, then refreshes the search in the background. If there is no cache yet, it performs a full aggregation, validation and ranking before returning options.
+The stream endpoint uses the stored working result immediately when available, then refreshes the search in the background if that setting is enabled. If there is no cache yet, it performs a full aggregation, validation and ranking before returning options.
 
 ## Admin panel
 
@@ -52,6 +52,16 @@ Panel sections:
 - Historia - view persisted searches and selected files.
 - Diagnostyka - run manual aggregation for a movie or series ID.
 - Ustawienia - preferred languages, buffer preset, validation timeout, transcode session limit, public URL and diagnostic toggles.
+
+Panel settings are now wired into runtime behavior:
+
+- preferred audio/subtitle languages affect ranking and original selection,
+- validation timeout affects stream checks,
+- default buffer preset affects HLS transcode sessions,
+- max transcode sessions affects FFmpeg process limiting,
+- public URL affects generated Stremio stream URLs,
+- background cache refresh can be enabled or disabled,
+- diagnostic details can return full or compact aggregation payloads.
 
 ## Development
 
@@ -127,7 +137,7 @@ DEFAULT_TRANSCODE_BUFFER_PRESET=auto
 MAX_TRANSCODE_SESSIONS=2
 ```
 
-Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BASE_URL` to the public HTTPS domain.
+Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BASE_URL` to the public HTTPS domain. The same value can also be managed later from the admin panel.
 
 ## Milestones
 
