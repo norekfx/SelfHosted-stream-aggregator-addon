@@ -1,5 +1,7 @@
 const state = {
   view: 'dashboard',
+  user: null,
+  needsRegistration: false,
   addons: [],
   cache: [],
   history: [],
@@ -23,7 +25,38 @@ init();
 async function init() {
   bindNavigation();
   bindForms();
-  await loadAll();
+  await checkAuth();
+}
+
+async function checkAuth() {
+  const status = await api('/auth/status');
+  state.user = status.user ?? null;
+  state.needsRegistration = Boolean(status.needsRegistration);
+
+  if (status.authenticated) {
+    showApp(status.user);
+    await loadAll();
+    return;
+  }
+
+  showAuth(status.needsRegistration);
+}
+
+function showAuth(needsRegistration) {
+  $('#appShell').classList.add('hidden');
+  $('#authScreen').classList.remove('hidden');
+  $('#authTitle').textContent = needsRegistration ? 'Rejestracja administratora' : 'Logowanie administratora';
+  $('#authSubtitle').textContent = needsRegistration ? 'Pierwsze uruchomienie' : 'Panel chroniony';
+  $('#authDescription').textContent = needsRegistration
+    ? 'Utwórz pierwsze konto administratora. Ten ekran pojawia się tylko przed pierwszą rejestracją.'
+    : 'Zaloguj się, aby zarządzać addonami, cache, historią i ustawieniami.';
+  $('#authSubmit').textContent = needsRegistration ? 'Zarejestruj' : 'Zaloguj';
+}
+
+function showApp(user) {
+  $('#authScreen').classList.add('hidden');
+  $('#appShell').classList.remove('hidden');
+  $('#userLabel').textContent = user ? `Zalogowano: ${user.username}` : '';
 }
 
 function bindNavigation() {
@@ -40,9 +73,23 @@ function bindNavigation() {
 
   $('#refreshBtn').addEventListener('click', refreshCurrentView);
   $('#reloadCacheBtn').addEventListener('click', loadCache);
+  $('#logoutBtn').addEventListener('click', logout);
 }
 
 function bindForms() {
+  $('#authForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const username = $('#authUsername').value.trim();
+    const password = $('#authPassword').value;
+    const endpoint = state.needsRegistration ? '/auth/register' : '/auth/login';
+    const result = await api(endpoint, { method: 'POST', body: { username, password } });
+    $('#authPassword').value = '';
+    state.user = result.user;
+    showApp(result.user);
+    toast(state.needsRegistration ? 'Administrator utworzony.' : 'Zalogowano.');
+    await loadAll();
+  });
+
   $('#addonForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const manifestUrl = $('#addonUrl').value.trim();
@@ -79,6 +126,15 @@ function bindForms() {
     renderSettings();
     toast('Ustawienia zapisane.');
   });
+}
+
+async function logout() {
+  await api('/auth/logout', { method: 'POST' });
+  state.user = null;
+  state.addons = [];
+  state.cache = [];
+  state.history = [];
+  showAuth(false);
 }
 
 async function loadAll() {
@@ -254,6 +310,10 @@ async function api(path, options = {}) {
   });
 
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && !path.startsWith('/auth/')) {
+    showAuth(false);
+    throw new Error('Sesja wygasła. Zaloguj się ponownie.');
+  }
   if (!response.ok) {
     throw new Error(data.error ?? `HTTP ${response.status}`);
   }
@@ -271,6 +331,7 @@ function formatDate(value) {
 
 function toast(message) {
   const el = $('#toast');
+  if (!el) return;
   el.textContent = message;
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 2500);
