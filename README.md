@@ -12,12 +12,13 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 - `GET /admin/addons` - list configured external addons.
 - `POST /admin/addons` - register an external addon by manifest URL.
 - `POST /admin/addons/:addonId/check` - manually refresh addon health.
+- `GET /admin/aggregate/:type/:id` - diagnostic aggregation endpoint for raw external addon results.
 - SQLite persistence for registered addons at `/data/db/aggregator.sqlite` by default.
 - European language registry with Polish as the default preferred audio/subtitle language.
 - Simplified visible stream options: `Original`, `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`.
 - Docker and Docker Compose files for TrueNAS Scale-style self-hosting.
 
-The stream endpoint currently returns no streams until real addon aggregation and validation are implemented. This is intentional: the project should not show Stremio links unless the original stream and transcoded variants can be trusted to work.
+The stream endpoint currently runs aggregation but returns no streams until validation, ranking and transcoding readiness checks are implemented. This is intentional: the project should not show Stremio links unless the original stream and transcoded variants can be trusted to work.
 
 ## Development
 
@@ -48,6 +49,12 @@ List registered addons:
 curl http://localhost:7000/admin/addons
 ```
 
+Run diagnostic aggregation:
+
+```bash
+curl http://localhost:7000/admin/aggregate/movie/tt0133093
+```
+
 ## Docker
 
 ```bash
@@ -65,7 +72,7 @@ Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BAS
 
 1. Add external addon registry: URL/GitHub input, manifest discovery, status checks. **Started.**
 2. Add persistent storage: SQLite plus cache directory for transcode/session metadata. **Started.**
-3. Implement real stream aggregation from configured addons.
+3. Implement real stream aggregation from configured addons. **Started.**
 4. Normalize results: quality, size, release group, language, subtitles, source addon.
 5. Validate streams before exposing them: `HEAD`, partial `GET`, timeout handling, `ffprobe` where possible.
 6. Select best original stream using preferred European audio/subtitle language rules.
