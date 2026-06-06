@@ -1,0 +1,21 @@
+services:
+  aggregator-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: selfhosted-stream-aggregator-api
+    restart: unless-stopped
+    environment:
+      HOME: /tmp
+      HOST: 0.0.0.0
+      PORT: 7000
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      DATA_DIR: /data
+      STREAM_VALIDATION_TIMEOUT_MS: ${STREAM_VALIDATION_TIMEOUT_MS:-10000}
+      FFMPEG_PATH: ffmpeg
+      DEFAULT_TRANSCODE_BUFFER_PRESET: ${DEFAULT_TRANSCODE_BUFFER_PRESET:-auto}
+      MAX_TRANSCODE_SESSIONS: ${MAX_TRANSCODE_SESSIONS:-2}
+    ports:
+      - "${HOST_PORT:-7000}:7000"
+    volumes:
+      - ${DATA_PATH:-/mnt/tank/apps/stream-aggregator/data}:/data
