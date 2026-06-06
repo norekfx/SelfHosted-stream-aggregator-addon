@@ -126,11 +126,8 @@ function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPref
     score += addScore(scoreReasons, "known content length", 20);
   }
 
-  return {
-    ...stream,
-    score,
-    scoreReasons
-  };
+  Object.assign(stream, { score, scoreReasons });
+  return stream as RankedStream;
 }
 
 function hasPreferredLanguageHint(value: string, preferredLanguage: string): boolean {
