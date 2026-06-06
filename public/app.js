@@ -6,7 +6,9 @@ const state = {
   cache: [],
   history: [],
   settings: {},
-  sessions: []
+  sessions: [],
+  healthReport: null,
+  logs: []
 };
 
 const titles = {
@@ -15,6 +17,7 @@ const titles = {
   cache: ['Cache', 'Zapamiętane działające wyniki dla szybkiego ponownego odtwarzania.'],
   history: ['Historia', 'Pełna historia sprawdzania i wyboru plików.'],
   diagnostics: ['Diagnostyka', 'Ręczne testowanie agregacji dla filmu lub odcinka.'],
+  system: ['System', 'Health-check techniczny i mały panel logów błędów.'],
   settings: ['Ustawienia', 'Opcje ułatwiające codzienne używanie i dopasowanie do serwera.'],
   security: ['Bezpieczeństwo', 'Hasło administratora, aktywne sesje i wylogowanie urządzeń.']
 };
@@ -76,6 +79,10 @@ function bindNavigation() {
   $('#refreshBtn').addEventListener('click', refreshCurrentView);
   $('#reloadCacheBtn').addEventListener('click', loadCache);
   $('#reloadSessionsBtn').addEventListener('click', loadSessions);
+  $('#runHealthCheckBtn').addEventListener('click', loadTechnicalHealth);
+  $('#reloadLogsBtn').addEventListener('click', loadSystemLogs);
+  $('#clearLogsBtn').addEventListener('click', clearSystemLogs);
+  $('#logLevelFilter').addEventListener('change', loadSystemLogs);
   $('#logoutBtn').addEventListener('click', logout);
   $('#logoutOtherSessionsBtn').addEventListener('click', logoutOtherSessions);
   $('#logoutAllSessionsBtn').addEventListener('click', logoutAllSessions);
@@ -171,10 +178,12 @@ function resetPrivateState() {
   state.cache = [];
   state.history = [];
   state.sessions = [];
+  state.healthReport = null;
+  state.logs = [];
 }
 
 async function loadAll() {
-  await Promise.allSettled([checkHealth(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions()]);
+  await Promise.allSettled([checkHealth(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]);
   renderDashboard();
 }
 
@@ -183,6 +192,7 @@ async function refreshCurrentView() {
   if (state.view === 'addons') await loadAddons();
   if (state.view === 'cache') await loadCache();
   if (state.view === 'history') await loadHistory();
+  if (state.view === 'system') await Promise.all([loadTechnicalHealth(), loadSystemLogs()]);
   if (state.view === 'settings') await loadSettings();
   if (state.view === 'security') await loadSessions();
 }
@@ -230,6 +240,27 @@ async function loadSessions() {
   const data = await api('/auth/sessions');
   state.sessions = data.sessions ?? [];
   renderSessions();
+}
+
+async function loadTechnicalHealth() {
+  const data = await api('/admin/system/health');
+  state.healthReport = data.report;
+  renderTechnicalHealth();
+}
+
+async function loadSystemLogs() {
+  const level = $('#logLevelFilter').value;
+  const query = level ? `?level=${encodeURIComponent(level)}&limit=100` : '?limit=100';
+  const data = await api(`/admin/system/logs${query}`);
+  state.logs = data.logs ?? [];
+  renderSystemLogs();
+}
+
+async function clearSystemLogs() {
+  await api('/admin/system/logs', { method: 'DELETE' });
+  state.logs = [];
+  renderSystemLogs();
+  toast('Logi wyczyszczone.');
 }
 
 function renderDashboard() {
@@ -322,6 +353,36 @@ function renderHistory() {
     item.workingStreamCount,
     item.failedStreamCount,
     escapeHtml(item.selectedOriginal?.title ?? '-')
+  ]));
+}
+
+function renderTechnicalHealth() {
+  const report = state.healthReport;
+  if (!report) {
+    $('#technicalHealth').innerHTML = '<div class="list empty">Nie uruchomiono testu.</div>';
+    return;
+  }
+
+  $('#technicalHealth').innerHTML = table(['Status', 'Test', 'Wiadomość', 'Szczegóły'], report.checks.map((check) => [
+    badge(check.status),
+    escapeHtml(check.name),
+    escapeHtml(check.message),
+    `<pre class="mini-code">${escapeHtml(JSON.stringify(check.details ?? {}, null, 2))}</pre>`
+  ]));
+}
+
+function renderSystemLogs() {
+  if (!state.logs.length) {
+    $('#systemLogs').innerHTML = '<div class="list empty">Brak logów dla wybranego filtra.</div>';
+    return;
+  }
+
+  $('#systemLogs').innerHTML = table(['Data', 'Poziom', 'Źródło', 'Komunikat', 'Szczegóły'], state.logs.map((log) => [
+    escapeHtml(formatDate(log.createdAt)),
+    badge(log.level),
+    escapeHtml(log.source),
+    escapeHtml(log.message),
+    `<pre class="mini-code">${escapeHtml(JSON.stringify(log.details ?? {}, null, 2))}</pre>`
   ]));
 }
 
