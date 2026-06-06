@@ -7,7 +7,26 @@
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <section id="authScreen" class="auth-screen">
+      <div class="auth-card">
+        <div class="brand auth-brand">
+          <div class="brand-mark">SA</div>
+          <div>
+            <strong>Stream Aggregator</strong>
+            <span id="authSubtitle">Konfiguracja administratora</span>
+          </div>
+        </div>
+        <h1 id="authTitle">Rejestracja administratora</h1>
+        <p id="authDescription">Utwórz pierwsze konto administratora. Ten ekran pojawia się tylko przed pierwszą rejestracją.</p>
+        <form id="authForm" class="auth-form">
+          <label>Nazwa użytkownika<input id="authUsername" autocomplete="username" minlength="3" required /></label>
+          <label>Hasło<input id="authPassword" type="password" autocomplete="current-password" minlength="10" required /></label>
+          <button id="authSubmit" class="primary-btn" type="submit">Zarejestruj</button>
+        </form>
+      </div>
+    </section>
+
+    <div id="appShell" class="app-shell hidden">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">SA</div>
@@ -37,8 +56,10 @@
             <p id="viewSubtitle">Szybki podgląd działania agregatora.</p>
           </div>
           <div class="top-actions">
+            <span id="userLabel" class="user-label"></span>
             <a class="ghost-link" href="/manifest.json" target="_blank" rel="noreferrer">Manifest</a>
             <button id="refreshBtn" class="primary-btn">Odśwież</button>
+            <button id="logoutBtn" class="ghost-btn">Wyloguj</button>
           </div>
         </header>
 
