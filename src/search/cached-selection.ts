@@ -2,6 +2,7 @@ import { getAppSettings } from "../settings/app-settings.js";
 import { aggregateStreams } from "../streams/aggregation.js";
 import { saveSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream, StreamType } from "../streams/types.js";
+import { writeSystemLog } from "../system/system-log.js";
 import {
   getCachedSearchResult,
   markCacheServed,
@@ -50,9 +51,23 @@ export async function refreshNow(type: StreamType, id: string): Promise<Aggregat
     }
 
     saveAggregationResult(aggregation, original);
+
+    if (!original) {
+      writeSystemLog("warn", "cache-refresh", "Refresh completed without a working original stream.", {
+        type,
+        id,
+        streamCount: aggregation.streamCount,
+        workingStreamCount: aggregation.workingStreamCount,
+        failedStreamCount: aggregation.failedStreamCount,
+        unsupportedStreamCount: aggregation.unsupportedStreamCount
+      });
+    }
+
     return original;
   } catch (error) {
-    markRefreshFailed(type, id, error instanceof Error ? error.message : "Unknown refresh error.");
+    const message = error instanceof Error ? error.message : "Unknown refresh error.";
+    markRefreshFailed(type, id, message);
+    writeSystemLog("error", "cache-refresh", message, { type, id });
     throw error;
   } finally {
     activeRefreshes.delete(refreshKey);
