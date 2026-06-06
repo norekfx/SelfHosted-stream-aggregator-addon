@@ -1,6 +1,6 @@
 export type StreamValidationStatus = "pending" | "working" | "failed" | "unsupported";
 
-export type StreamValidationMethod = "HEAD" | "RANGE_GET" | "SKIPPED";
+export type StreamValidationMethod = "HEAD" | "RANGE_GET" | "SKIPPED" | "NOT_CHECKED";
 
 export type StreamValidationResult = {
   status: StreamValidationStatus;
@@ -20,3 +20,12 @@ export type StreamValidationInput = {
   externalUrl?: string;
   infoHash?: string;
 };
+
+export function notChecked(reason = "Link validation skipped by current validation mode."): StreamValidationResult {
+  return {
+    status: "pending",
+    method: "NOT_CHECKED",
+    checkedAt: new Date().toISOString(),
+    reason
+  };
+}
