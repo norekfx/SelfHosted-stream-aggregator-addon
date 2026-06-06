@@ -70,6 +70,10 @@ export type SearchHistoryEntry = {
   selectedOriginal: AggregatedStream | null;
 };
 
+export type SearchHistoryDetails = SearchHistoryEntry & {
+  result: AggregationResult | null;
+};
+
 export function createCacheKey(type: StreamType, mediaId: string): string {
   return `${type}:${mediaId}`;
 }
@@ -97,6 +101,21 @@ export function listSearchHistory(limit = 50): SearchHistoryEntry[] {
     .all(limit) as SearchHistoryRow[];
 
   return rows.map(mapHistoryRow);
+}
+
+export function getSearchHistoryDetails(historyId: string): SearchHistoryDetails | undefined {
+  const row = getDatabase()
+    .prepare("SELECT * FROM search_history WHERE id = ?")
+    .get(historyId) as SearchHistoryRow | undefined;
+
+  if (!row) {
+    return undefined;
+  }
+
+  return {
+    ...mapHistoryRow(row),
+    result: safeParse<AggregationResult | null>(row.result_json, null)
+  };
 }
 
 export function markCacheServed(type: StreamType, mediaId: string): void {
