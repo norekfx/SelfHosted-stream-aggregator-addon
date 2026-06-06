@@ -10,9 +10,19 @@ import { getTranscodeProfile, type TranscodeProfile } from "./transcode-profiles
 
 export type TranscodeSessionStatus = "starting" | "running" | "exited" | "failed";
 
+export type TranscodeSpeedStats = {
+  samples: number;
+  average?: number;
+  min?: number;
+  max?: number;
+};
+
 export type TranscodeSession = {
   id: string;
   streamId: string;
+  title?: string;
+  sourceAddon?: string;
+  sourceQuality?: string;
   quality: TranscodeQuality;
   bufferPreset: BufferPreset;
   originalUrl: string;
@@ -26,6 +36,7 @@ export type TranscodeSession = {
   lastLog?: string;
   stopReason?: string;
   progress?: { frame?: number; fps?: number; bitrate?: string; outTime?: string; speed?: string; progress?: string };
+  speedStats?: TranscodeSpeedStats;
   buffer?: { segmentCount: number; estimatedSeconds: number; segmentSeconds: number };
   process?: ChildProcessWithoutNullStreams;
 };
@@ -34,6 +45,7 @@ const sessions = new Map<string, TranscodeSession>();
 
 export function getTranscodeSession(sessionId: string): TranscodeSession | undefined { const session = sessions.get(sessionId); if (session) updateBufferInfo(session); return session; }
 export function listTranscodeSessions(): Array<Omit<TranscodeSession, "process">> { return Array.from(sessions.values()).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50).map((session) => { updateBufferInfo(session); const { process: _process, ...snapshot } = session; return snapshot; }); }
+export function stopTranscodeSession(sessionId: string, reason = "stopped manually"): Omit<TranscodeSession, "process"> | undefined { const session = sessions.get(sessionId); if (!session) return undefined; session.stopReason = reason; session.updatedAt = new Date().toISOString(); if (session.process && (session.status === "running" || session.status === "starting")) { session.process.kill("SIGTERM"); } else if (session.status === "running" || session.status === "starting") { session.status = "exited"; } updateBufferInfo(session); const { process: _process, ...snapshot } = session; writeSystemLog("info", "transcode", "Transcode session stop requested.", { sessionId: session.id, streamId: session.streamId, quality: session.quality, reason }); return snapshot; }
 
 export function getOrCreateTranscodeSession(original: AggregatedStream, quality: TranscodeQuality, bufferPreset: BufferPreset): TranscodeSession {
   if (!original.originalUrl) throw new Error("Selected original has no originalUrl.");
@@ -44,7 +56,7 @@ export function getOrCreateTranscodeSession(original: AggregatedStream, quality:
   const outputDir = join(getTranscodeCacheDir(), sessionId);
   mkdirSync(outputDir, { recursive: true });
   const profile = getTranscodeProfile(quality, bufferPreset);
-  const session: TranscodeSession = { id: sessionId, streamId: original.id, quality, bufferPreset, originalUrl: original.originalUrl, profile, outputDir, playlistPath: join(outputDir, "master.m3u8"), status: "starting", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), buffer: { segmentCount: 0, estimatedSeconds: 0, segmentSeconds: profile.hlsSegmentSeconds } };
+  const session: TranscodeSession = { id: sessionId, streamId: original.id, title: original.title || original.name, sourceAddon: original.sourceAddon, sourceQuality: original.quality, quality, bufferPreset, originalUrl: original.originalUrl, profile, outputDir, playlistPath: join(outputDir, "master.m3u8"), status: "starting", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), speedStats: { samples: 0 }, buffer: { segmentCount: 0, estimatedSeconds: 0, segmentSeconds: profile.hlsSegmentSeconds } };
   sessions.set(sessionId, session);
   startFfmpeg(session);
   return session;
@@ -72,7 +84,8 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
 }
 
 function enforceSessionLimit(): void { const runningSessions = Array.from(sessions.values()).filter((session) => session.status === "running" || session.status === "starting"); if (runningSessions.length < getEffectiveMaxTranscodeSessions()) return; const oldest = runningSessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0]; if (oldest?.process) { oldest.stopReason = "session limit reached"; oldest.process.kill("SIGTERM"); oldest.status = "exited"; oldest.updatedAt = new Date().toISOString(); writeSystemLog("warn", "transcode", "Stopped oldest transcode session because the session limit was reached.", { sessionId: oldest.id, streamId: oldest.streamId, quality: oldest.quality }); } }
-function parseFfmpegProgress(session: TranscodeSession, text: string): void { const progress = session.progress ?? {}; for (const line of text.split(/\r?\n/)) { const [key, value] = line.split("=", 2); if (!key || value === undefined) continue; if (key === "frame") progress.frame = Number.parseInt(value, 10); if (key === "fps") progress.fps = Number.parseFloat(value); if (key === "bitrate") progress.bitrate = value; if (key === "out_time") progress.outTime = value; if (key === "speed") progress.speed = value; if (key === "progress") progress.progress = value; } session.progress = progress; }
+function parseFfmpegProgress(session: TranscodeSession, text: string): void { const progress = session.progress ?? {}; for (const line of text.split(/\r?\n/)) { const [key, value] = line.split("=", 2); if (!key || value === undefined) continue; if (key === "frame") progress.frame = Number.parseInt(value, 10); if (key === "fps") progress.fps = Number.parseFloat(value); if (key === "bitrate") progress.bitrate = value; if (key === "out_time") progress.outTime = value; if (key === "speed") { progress.speed = value; updateSpeedStats(session, value); } if (key === "progress") progress.progress = value; } session.progress = progress; }
+function updateSpeedStats(session: TranscodeSession, rawSpeed: string): void { const speed = Number.parseFloat(rawSpeed.replace(/x$/i, "")); if (!Number.isFinite(speed) || speed <= 0) return; const stats = session.speedStats ?? { samples: 0 }; const samples = stats.samples + 1; const previousAverage = stats.average ?? speed; stats.samples = samples; stats.average = ((previousAverage * (samples - 1)) + speed) / samples; stats.min = stats.min === undefined ? speed : Math.min(stats.min, speed); stats.max = stats.max === undefined ? speed : Math.max(stats.max, speed); session.speedStats = stats; }
 function updateBufferInfo(session: TranscodeSession): void { try { const segmentCount = readdirSync(session.outputDir).filter((file) => /^segment_\d{5}\.ts$/.test(file)).length; session.buffer = { segmentCount, estimatedSeconds: segmentCount * session.profile.hlsSegmentSeconds, segmentSeconds: session.profile.hlsSegmentSeconds }; } catch { session.buffer = { segmentCount: 0, estimatedSeconds: 0, segmentSeconds: session.profile.hlsSegmentSeconds }; } }
 export function createTranscodeSessionId(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset): string { return createSessionId(streamId, quality, bufferPreset); }
 function createSessionId(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset): string { return Buffer.from(`${streamId}|${quality}|${bufferPreset}`).toString("base64url"); }
