@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
+import { aggregateStreams } from "../streams/aggregation.js";
 
 const registerAddonSchema = z.object({
   manifestUrl: z.string().url(),
@@ -9,6 +10,11 @@ const registerAddonSchema = z.object({
 
 const updateAddonSchema = z.object({
   enabled: z.boolean()
+});
+
+const aggregateParamsSchema = z.object({
+  type: z.enum(["movie", "series"]),
+  id: z.string().min(1)
 });
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
@@ -24,6 +30,16 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const addon = await registerAddon(body.data);
     reply.code(201);
     return { addon };
+  });
+
+  app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/aggregate/:type/:id", async (request, reply) => {
+    const params = aggregateParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      reply.code(400);
+      return { error: "Invalid aggregation parameters.", details: params.error.flatten() };
+    }
+
+    return aggregateStreams(params.data.type, params.data.id);
   });
 
   app.get<{ Params: { addonId: string } }>("/admin/addons/:addonId", async (request, reply) => {
