@@ -14,6 +14,7 @@ export type RawAggregatedStream = {
   addonName?: string;
   name?: string;
   title?: string;
+  description?: string;
   url?: string;
   externalUrl?: string;
   infoHash?: string;
@@ -105,13 +106,14 @@ async function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremio
     addonName: addon.name,
     name: stream.name,
     title: stream.title,
+    description: stream.description,
     url: stream.url,
     externalUrl: stream.externalUrl,
     infoHash: stream.infoHash,
     fileIdx: stream.fileIdx,
     sources: stream.sources,
     behaviorHints: stream.behaviorHints,
-    metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename }),
+    metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename, description: stream.description }),
     validation: await validateStream(
       { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
       getEffectiveStreamValidationTimeoutMs()
