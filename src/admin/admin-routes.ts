@@ -5,6 +5,8 @@ import { getAppSettings, updateAppSettings } from "../settings/app-settings.js";
 import { getCachedSearchResult, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
+import { clearSystemLogs, listSystemLogs, type SystemLogLevel } from "../system/system-log.js";
+import { runTechnicalHealthCheck } from "../system/technical-health.js";
 
 const registerAddonSchema = z.object({
   manifestUrl: z.string().url(),
@@ -22,6 +24,11 @@ const aggregateParamsSchema = z.object({
 
 const limitQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).default(50)
+});
+
+const logsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(500).default(100),
+  level: z.enum(["debug", "info", "warn", "error"]).optional()
 });
 
 const settingsSchema = z.object({
@@ -50,6 +57,23 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       publicBaseUrl: body.data.publicBaseUrl === "" ? undefined : body.data.publicBaseUrl
     });
     return { settings };
+  });
+
+  app.get("/admin/system/health", async () => ({ report: await runTechnicalHealthCheck() }));
+
+  app.get<{ Querystring: { limit?: string; level?: SystemLogLevel } }>("/admin/system/logs", async (request, reply) => {
+    const query = logsQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      reply.code(400);
+      return { error: "Invalid logs query.", details: query.error.flatten() };
+    }
+
+    return { logs: listSystemLogs(query.data.limit, query.data.level) };
+  });
+
+  app.delete("/admin/system/logs", async () => {
+    clearSystemLogs();
+    return { ok: true };
   });
 
   app.get("/admin/addons", async () => ({ addons: listAddons() }));
