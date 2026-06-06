@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { env, getTranscodeCacheDir } from "../config/env.js";
@@ -33,20 +33,31 @@ export type TranscodeSession = {
     speed?: string;
     progress?: string;
   };
+  buffer?: {
+    segmentCount: number;
+    estimatedSeconds: number;
+    segmentSeconds: number;
+  };
   process?: ChildProcessWithoutNullStreams;
 };
 
 const sessions = new Map<string, TranscodeSession>();
 
 export function getTranscodeSession(sessionId: string): TranscodeSession | undefined {
-  return sessions.get(sessionId);
+  const session = sessions.get(sessionId);
+  if (session) updateBufferInfo(session);
+  return session;
 }
 
 export function listTranscodeSessions(): Array<Omit<TranscodeSession, "process">> {
   return Array.from(sessions.values())
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
     .slice(0, 50)
-    .map(({ process: _process, ...session }) => session);
+    .map((session) => {
+      updateBufferInfo(session);
+      const { process: _process, ...snapshot } = session;
+      return snapshot;
+    });
 }
 
 export function getOrCreateTranscodeSession(
@@ -61,6 +72,7 @@ export function getOrCreateTranscodeSession(
   const sessionId = createSessionId(original.id, quality, bufferPreset);
   const existing = sessions.get(sessionId);
   if (existing && existing.status !== "failed" && existing.status !== "exited") {
+    updateBufferInfo(existing);
     return existing;
   }
 
@@ -81,7 +93,8 @@ export function getOrCreateTranscodeSession(
     playlistPath: join(outputDir, "master.m3u8"),
     status: "starting",
     startedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    buffer: { segmentCount: 0, estimatedSeconds: 0, segmentSeconds: profile.hlsSegmentSeconds }
   };
 
   sessions.set(sessionId, session);
@@ -100,6 +113,7 @@ function startFfmpeg(session: TranscodeSession): void {
     const text = chunk.toString();
     session.lastLog = text.slice(-2000);
     parseFfmpegProgress(session, text);
+    updateBufferInfo(session);
 
     if (/error|invalid|failed/i.test(text)) {
       session.error = text.slice(-2000);
@@ -122,6 +136,7 @@ function startFfmpeg(session: TranscodeSession): void {
 
   child.on("exit", (code, signal) => {
     session.process = undefined;
+    updateBufferInfo(session);
     session.updatedAt = new Date().toISOString();
 
     if (session.stopReason) {
@@ -194,7 +209,7 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     "-preset",
     "veryfast",
     "-crf",
-    session.quality === "auto" ? "22" : "23",
+    session.quality === "auto" ? "24" : "23",
     "-pix_fmt",
     "yuv420p",
     "-profile:v",
@@ -277,6 +292,19 @@ function parseFfmpegProgress(session: TranscodeSession, text: string): void {
     if (key === "progress") progress.progress = value;
   }
   session.progress = progress;
+}
+
+function updateBufferInfo(session: TranscodeSession): void {
+  try {
+    const segmentCount = readdirSync(session.outputDir).filter((file) => /^segment_\d{5}\.ts$/.test(file)).length;
+    session.buffer = {
+      segmentCount,
+      estimatedSeconds: segmentCount * session.profile.hlsSegmentSeconds,
+      segmentSeconds: session.profile.hlsSegmentSeconds
+    };
+  } catch {
+    session.buffer = { segmentCount: 0, estimatedSeconds: 0, segmentSeconds: session.profile.hlsSegmentSeconds };
+  }
 }
 
 export function createTranscodeSessionId(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset): string {
