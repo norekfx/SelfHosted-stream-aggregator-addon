@@ -5,7 +5,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(7000),
   PUBLIC_BASE_URL: z.string().url().optional(),
   DATA_DIR: z.string().default("/data"),
-  DATABASE_PATH: z.string().optional()
+  DATABASE_PATH: z.string().optional(),
+  STREAM_VALIDATION_TIMEOUT_MS: z.coerce.number().int().positive().default(10000)
 });
 
 export const env = envSchema.parse(process.env);
