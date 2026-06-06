@@ -2,17 +2,15 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { z } from "zod";
 import { registerAdminRoutes } from "./admin/admin-routes.js";
+import { env } from "./config/env.js";
+import { getDatabase } from "./db/database.js";
+import { runMigrations } from "./db/migrations.js";
 import { addonManifest } from "./stremio/manifest.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 
-const envSchema = z.object({
-  HOST: z.string().default("0.0.0.0"),
-  PORT: z.coerce.number().int().positive().default(7000),
-  PUBLIC_BASE_URL: z.string().url().optional()
-});
+runMigrations(getDatabase());
 
-const env = envSchema.parse(process.env);
 const app = Fastify({
   logger: {
     transport: process.env.NODE_ENV === "production" ? undefined : { target: "pino-pretty" }
