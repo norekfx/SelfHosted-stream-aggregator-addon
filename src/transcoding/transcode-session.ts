@@ -181,12 +181,12 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
 
   const videoFilters: string[] = [];
   if (profile.width && profile.height) {
-    videoFilters.push(`scale=w=${profile.width}:h=${profile.height}:force_original_aspect_ratio=decrease`);
+    videoFilters.push(`scale=w=${profile.width}:h=${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2`);
   }
 
-  if (videoFilters.length > 0) {
-    args.push("-vf", videoFilters.join(","));
-  }
+  videoFilters.push("format=yuv420p");
+
+  args.push("-vf", videoFilters.join(","));
 
   args.push(
     "-c:v",
@@ -198,7 +198,13 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     "-pix_fmt",
     "yuv420p",
     "-profile:v",
-    "high"
+    "high",
+    "-g",
+    "48",
+    "-keyint_min",
+    "48",
+    "-sc_threshold",
+    "0"
   );
 
   if (profile.videoBitrateKbps) {
@@ -222,9 +228,11 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     "-hls_time",
     String(profile.hlsSegmentSeconds),
     "-hls_list_size",
-    String(profile.hlsListSize),
+    "0",
+    "-hls_playlist_type",
+    "event",
     "-hls_flags",
-    "delete_segments+append_list+independent_segments",
+    "independent_segments+temp_file",
     "-hls_segment_type",
     "mpegts",
     "-hls_segment_filename",
