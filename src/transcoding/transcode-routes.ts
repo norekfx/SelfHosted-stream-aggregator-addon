@@ -7,7 +7,7 @@ import type { BufferPreset } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import { writeSystemLog } from "../system/system-log.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
-import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession, listTranscodeSessions } from "./transcode-session.js";
+import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession, listTranscodeSessions, stopTranscodeSession } from "./transcode-session.js";
 
 const playlistParamsSchema = z.object({
   streamId: z.string().min(1),
@@ -18,8 +18,26 @@ const segmentParamsSchema = playlistParamsSchema.extend({
   segment: z.string().regex(/^segment_\d{5}\.ts$/)
 });
 
+const stopParamsSchema = z.object({ sessionId: z.string().min(1) });
+
 export async function registerTranscodeRoutes(app: FastifyInstance): Promise<void> {
   app.get("/transcode/sessions", async () => ({ sessions: listTranscodeSessions() }));
+
+  app.post<{ Params: { sessionId: string } }>("/transcode/sessions/:sessionId/stop", async (request, reply) => {
+    const params = stopParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      reply.code(400);
+      return { error: "Invalid transcode session id.", details: params.error.flatten() };
+    }
+
+    const session = stopTranscodeSession(params.data.sessionId, "stopped from system panel");
+    if (!session) {
+      reply.code(404);
+      return { error: "Transcode session not found." };
+    }
+
+    return { session };
+  });
 
   app.get<{ Params: { streamId: string; quality: string }; Querystring: { buffer?: string } }>(
     "/transcode/:streamId/:quality/master.m3u8",
