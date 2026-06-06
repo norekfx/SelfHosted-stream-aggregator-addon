@@ -6,9 +6,11 @@ const state = {
   cache: [],
   history: [],
   settings: {},
+  languages: [],
   sessions: [],
   healthReport: null,
-  logs: []
+  logs: [],
+  historyDetails: null
 };
 
 const titles = {
@@ -18,7 +20,7 @@ const titles = {
   cache: ['Cache', 'Zapamiętane działające wyniki dla szybkiego ponownego odtwarzania.'],
   history: ['Historia', 'Pełna historia sprawdzania i wyboru plików.'],
   diagnostics: ['Diagnostyka', 'Ręczne testowanie agregacji dla filmu lub odcinka.'],
-  system: ['System', 'Health-check techniczny i mały panel logów błędów.'],
+  system: ['System', 'Health-check techniczny i logi systemowe.'],
   settings: ['Ustawienia', 'Opcje ułatwiające codzienne używanie i dopasowanie do serwera.'],
   security: ['Bezpieczeństwo', 'Hasło administratora, aktywne sesje i wylogowanie urządzeń.']
 };
@@ -80,12 +82,13 @@ function bindNavigation() {
   $('#refreshBtn').addEventListener('click', refreshCurrentView);
   $('#reloadCacheBtn').addEventListener('click', loadCache);
   $('#reloadSessionsBtn').addEventListener('click', loadSessions);
-  $('#runHealthCheckBtn').addEventListener('click', loadTechnicalHealth);
+  $('#runHealthCheckBtn').addEventListener('click', () => runButtonAction($('#runHealthCheckBtn'), 'Test...', loadTechnicalHealth));
   $('#reloadLogsBtn').addEventListener('click', loadSystemLogs);
   $('#clearLogsBtn').addEventListener('click', clearSystemLogs);
   $('#logLevelFilter').addEventListener('change', loadSystemLogs);
   $('#copyManifestBtn').addEventListener('click', () => copyText(getManifestUrl(), 'Skopiowano URL manifestu.'));
   $('#copyTestStreamBtn').addEventListener('click', () => copyText(getTestStreamUrl(), 'Skopiowano testowy URL streamów.'));
+  $('#diagnosticsOutputSize').addEventListener('change', updateDiagnosticsOutputSize);
   $('#logoutBtn').addEventListener('click', logout);
   $('#logoutOtherSessionsBtn').addEventListener('click', logoutOtherSessions);
   $('#logoutAllSessionsBtn').addEventListener('click', logoutAllSessions);
@@ -112,22 +115,19 @@ function bindForms() {
     $('#addonUrl').value = '';
     toast('Addon dodany.');
     await loadAddons();
+    await loadSystemLogs();
   });
 
   $('#diagnosticsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const type = $('#diagType').value;
-    const id = $('#diagId').value.trim();
-    $('#diagnosticsOutput').textContent = 'Uruchamianie diagnostyki...';
-    const result = await api(`/admin/aggregate/${type}/${encodeURIComponent(id)}`);
-    $('#diagnosticsOutput').textContent = JSON.stringify(result, null, 2);
+    await runDiagnostics();
   });
 
   $('#settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const body = {
-      preferredAudioLanguage: $('#preferredAudioLanguage').value.trim(),
-      preferredSubtitleLanguage: $('#preferredSubtitleLanguage').value.trim(),
+      preferredAudioLanguage: $('#preferredAudioLanguage').value,
+      preferredSubtitleLanguage: $('#preferredSubtitleLanguage').value,
       defaultTranscodeBufferPreset: $('#defaultTranscodeBufferPreset').value,
       streamValidationTimeoutMs: Number($('#streamValidationTimeoutMs').value),
       maxTranscodeSessions: Number($('#maxTranscodeSessions').value),
@@ -141,6 +141,7 @@ function bindForms() {
     renderSettings();
     renderInstall();
     toast('Ustawienia zapisane.');
+    await loadSystemLogs();
   });
 
   $('#changePasswordForm').addEventListener('submit', async (event) => {
@@ -184,10 +185,11 @@ function resetPrivateState() {
   state.sessions = [];
   state.healthReport = null;
   state.logs = [];
+  state.historyDetails = null;
 }
 
 async function loadAll() {
-  await Promise.allSettled([checkHealth(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]);
+  await Promise.allSettled([checkHealth(), loadLanguages(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]);
   renderDashboard();
   renderInstall();
 }
@@ -199,7 +201,7 @@ async function refreshCurrentView() {
   if (state.view === 'cache') await loadCache();
   if (state.view === 'history') await loadHistory();
   if (state.view === 'system') await Promise.all([loadTechnicalHealth(), loadSystemLogs()]);
-  if (state.view === 'settings') await loadSettings();
+  if (state.view === 'settings') await Promise.all([loadLanguages(), loadSettings()]);
   if (state.view === 'security') await loadSessions();
 }
 
@@ -212,6 +214,12 @@ async function checkHealth() {
     $('.status-dot').className = 'status-dot bad';
     $('#healthLabel').textContent = 'API offline';
   }
+}
+
+async function loadLanguages() {
+  const data = await api('/admin/languages');
+  state.languages = data.languages ?? [];
+  renderLanguageSelects();
 }
 
 async function loadSettings() {
@@ -244,6 +252,12 @@ async function loadHistory() {
   renderDashboard();
 }
 
+async function loadHistoryDetails(historyId) {
+  const data = await api(`/admin/history/${encodeURIComponent(historyId)}`);
+  state.historyDetails = data.details;
+  renderHistoryDetails();
+}
+
 async function loadSessions() {
   const data = await api('/auth/sessions');
   state.sessions = data.sessions ?? [];
@@ -255,11 +269,12 @@ async function loadTechnicalHealth() {
   state.healthReport = data.report;
   renderTechnicalHealth();
   renderInstall();
+  toast(`Health-check: ${data.report.status}`);
 }
 
 async function loadSystemLogs() {
   const level = $('#logLevelFilter').value;
-  const query = level ? `?level=${encodeURIComponent(level)}&limit=100` : '?limit=100';
+  const query = level ? `?level=${encodeURIComponent(level)}&limit=200` : '?limit=200';
   const data = await api(`/admin/system/logs${query}`);
   state.logs = data.logs ?? [];
   renderSystemLogs();
@@ -267,9 +282,23 @@ async function loadSystemLogs() {
 
 async function clearSystemLogs() {
   await api('/admin/system/logs', { method: 'DELETE' });
-  state.logs = [];
-  renderSystemLogs();
+  await loadSystemLogs();
   toast('Logi wyczyszczone.');
+}
+
+async function runDiagnostics() {
+  const type = $('#diagType').value;
+  const id = $('#diagId').value.trim();
+  const button = $('#runDiagnosticsBtn');
+  await runButtonAction(button, 'Pracuje...', async () => {
+    $('#diagnosticsOutput').textContent = 'Diagnostyka pracuje...';
+    toast('Diagnostyka pracuje...');
+    const result = await api(`/admin/aggregate/${type}/${encodeURIComponent(id)}`);
+    $('#diagnosticsOutput').textContent = JSON.stringify(result, null, 2);
+    toast(result.selectedOriginal ? 'Diagnostyka zakończona: znaleziono działający Original.' : 'Diagnostyka zakończona: brak działającego Original.');
+    await loadHistory();
+    await loadSystemLogs();
+  });
 }
 
 function renderDashboard() {
@@ -289,8 +318,8 @@ function renderDashboard() {
 function renderSettingsSummary() {
   const s = state.settings ?? {};
   $('#settingsSummary').innerHTML = [
-    ['Audio', s.preferredAudioLanguage],
-    ['Napisy', s.preferredSubtitleLanguage],
+    ['Audio', languageLabel(s.preferredAudioLanguage)],
+    ['Napisy', languageLabel(s.preferredSubtitleLanguage)],
     ['Bufor', s.defaultTranscodeBufferPreset],
     ['Timeout walidacji', `${s.streamValidationTimeoutMs ?? '-'} ms`],
     ['Sesje transkodowania', s.maxTranscodeSessions],
@@ -319,10 +348,7 @@ function renderInstall() {
   ];
 
   $('#installChecklist').innerHTML = checks.map(([label, status, message]) => `
-    <div class="check-item">
-      <div><strong>${escapeHtml(label)}</strong><br><span>${escapeHtml(message)}</span></div>
-      ${badge(status)}
-    </div>
+    <div class="check-item"><div><strong>${escapeHtml(label)}</strong><br><span>${escapeHtml(message)}</span></div>${badge(status)}</div>
   `).join('');
 }
 
@@ -332,25 +358,33 @@ function renderAddons() {
     return;
   }
 
-  $('#addonsList').innerHTML = table(['Nazwa', 'Status', 'Zasoby', 'Typy', 'Czas', 'Akcje'], state.addons.map((addon) => [
-    `<strong>${escapeHtml(addon.name ?? addon.manifestUrl)}</strong><br><small>${escapeHtml(addon.manifestUrl)}</small>`,
-    badge(addon.status),
-    escapeHtml((addon.supportedResources ?? []).join(', ') || '-'),
-    escapeHtml((addon.supportedTypes ?? []).join(', ') || '-'),
-    `${addon.responseTimeMs ?? '-'} ms`,
-    `<div class="action-row"><button class="small-btn" data-check-addon="${addon.id}">Sprawdź</button><button class="small-btn" data-toggle-addon="${addon.id}" data-enabled="${!addon.enabled}">${addon.enabled ? 'Wyłącz' : 'Włącz'}</button></div>`
-  ]));
+  $('#addonsList').innerHTML = table(['Nazwa', 'Status', 'Tryb', 'Zasoby', 'Typy', 'Czas', 'Akcje'], state.addons.map((addon) => {
+    const toggleClass = addon.enabled ? (addon.status === 'online' ? 'enabled' : 'warning') : 'disabled';
+    return [
+      `<strong>${escapeHtml(addon.name ?? addon.manifestUrl)}</strong><br><small>${escapeHtml(addon.manifestUrl)}</small>`,
+      badge(addon.status),
+      badge(addon.enabled ? 'enabled' : 'disabled'),
+      escapeHtml((addon.supportedResources ?? []).join(', ') || '-'),
+      escapeHtml((addon.supportedTypes ?? []).join(', ') || '-'),
+      `${addon.responseTimeMs ?? '-'} ms`,
+      `<div class="action-row"><button class="small-btn" data-check-addon="${addon.id}">Sprawdź</button><button class="small-btn ${toggleClass}" data-toggle-addon="${addon.id}" data-enabled="${!addon.enabled}">${addon.enabled ? 'Wyłącz' : 'Włącz'}</button></div>`
+    ];
+  }));
 
   $$('[data-check-addon]').forEach((button) => button.addEventListener('click', async () => {
-    await api(`/admin/addons/${button.dataset.checkAddon}/check`, { method: 'POST' });
-    toast('Sprawdzono addon.');
-    await loadAddons();
+    await runButtonAction(button, 'Sprawdzam...', async () => {
+      const data = await api(`/admin/addons/${button.dataset.checkAddon}/check`, { method: 'POST' });
+      toast(data.addon?.status === 'online' ? 'Addon działa.' : `Addon ma błąd: ${data.addon?.lastError ?? 'nieznany błąd'}`);
+      await loadAddons();
+      await loadSystemLogs();
+    });
   }));
 
   $$('[data-toggle-addon]').forEach((button) => button.addEventListener('click', async () => {
     await api(`/admin/addons/${button.dataset.toggleAddon}`, { method: 'PATCH', body: { enabled: button.dataset.enabled === 'true' } });
     toast('Zmieniono status addonu.');
     await loadAddons();
+    await loadSystemLogs();
   }));
 }
 
@@ -371,9 +405,12 @@ function renderCache() {
 
   $$('[data-refresh-cache]').forEach((button) => button.addEventListener('click', async () => {
     const { type, id } = parseTypedMediaId(button.dataset.refreshCache);
-    await api(`/admin/cache/${type}/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
-    toast('Cache odświeżony.');
-    await loadCache();
+    await runButtonAction(button, 'Odświeżam...', async () => {
+      await api(`/admin/cache/${type}/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+      toast('Cache odświeżony.');
+      await loadCache();
+      await loadSystemLogs();
+    });
   }));
 }
 
@@ -383,14 +420,65 @@ function renderHistory() {
     return;
   }
 
-  $('#historyList').innerHTML = table(['Data', 'Media', 'Streamy', 'Działające', 'Błędne', 'Wybrany Original'], state.history.map((item) => [
+  $('#historyList').innerHTML = table(['Data', 'Media', 'Streamy', 'Działające', 'Błędne', 'Wybrany Original', 'Akcje'], state.history.map((item) => [
     escapeHtml(formatDate(item.searchedAt)),
     `${escapeHtml(item.type)}:${escapeHtml(item.mediaId)}`,
     item.streamCount,
     item.workingStreamCount,
     item.failedStreamCount,
-    escapeHtml(item.selectedOriginal?.title ?? '-')
+    escapeHtml(item.selectedOriginal?.title ?? '-'),
+    `<button class="small-btn" data-history-details="${item.id}">Szczegóły</button>`
   ]));
+
+  $$('[data-history-details]').forEach((button) => button.addEventListener('click', async () => {
+    await runButtonAction(button, 'Ładuję...', async () => loadHistoryDetails(button.dataset.historyDetails));
+  }));
+}
+
+function renderHistoryDetails() {
+  const details = state.historyDetails;
+  if (!details?.result) {
+    $('#historyDetails').innerHTML = '<div class="list empty">Brak szczegółów dla tego wpisu.</div>';
+    return;
+  }
+
+  const selectedId = details.selectedOriginal?.id;
+  const streams = details.result.rankedStreams ?? [];
+  $('#historyDetails').innerHTML = `
+    <div class="kv-list">
+      <div class="kv"><span>Media</span><strong>${escapeHtml(details.type)}:${escapeHtml(details.mediaId)}</strong></div>
+      <div class="kv"><span>Wybrany Original</span><strong>${escapeHtml(details.selectedOriginal?.title ?? 'brak')}</strong></div>
+      <div class="kv"><span>Statystyki</span><strong>${details.workingStreamCount}/${details.streamCount} działa</strong></div>
+    </div>
+    <h3>Znalezione pliki</h3>
+    ${streams.length ? streams.map((stream) => renderStreamCard(stream, selectedId)).join('') : '<div class="list empty">Brak plików w szczegółach.</div>'}
+  `;
+}
+
+function renderStreamCard(stream, selectedId) {
+  const isSelected = stream.id === selectedId;
+  const reason = isSelected ? 'Wybrany jako najlepszy działający Original.' : explainRejection(stream);
+  return `
+    <article class="stream-card">
+      <header><strong>${escapeHtml(stream.title ?? stream.name ?? stream.id)}</strong>${badge(isSelected ? 'selected' : (stream.validationStatus ?? 'unknown'))}</header>
+      <div class="stream-meta">
+        <span>${escapeHtml(stream.sourceAddon ?? 'unknown addon')}</span>
+        <span>${escapeHtml(stream.quality ?? 'unknown quality')}</span>
+        <span>audio: ${escapeHtml(stream.audioLanguage ?? '-')}</span>
+        <span>napisy: ${escapeHtml(stream.subtitleLanguage ?? '-')}</span>
+      </div>
+      <div class="reject-reason">${escapeHtml(reason)}</div>
+    </article>
+  `;
+}
+
+function explainRejection(stream) {
+  if (stream.validationStatus === 'failed') return `Nie działa: ${stream.validationReason ?? 'walidacja źródła nie powiodła się.'}`;
+  if (stream.validationStatus === 'pending') return 'Nie został jeszcze zwalidowany.';
+  if (stream.isValidated === false) return 'Nie przeszedł walidacji.';
+  if (stream.audioLanguage && stream.audioLanguage !== state.settings.preferredAudioLanguage) return `Język audio niezgodny z preferencją (${languageLabel(state.settings.preferredAudioLanguage)}).`;
+  if (!stream.quality) return 'Brak rozpoznanej jakości, więc ranking dał niższy priorytet.';
+  return 'Działa, ale ranking wybrał lepszy plik według języka, jakości lub źródła.';
 }
 
 function renderTechnicalHealth() {
@@ -437,8 +525,15 @@ function renderSessions() {
   ]));
 }
 
+function renderLanguageSelects() {
+  const options = state.languages.map((language) => `<option value="${escapeHtml(language.code)}">${escapeHtml(language.label)}</option>`).join('');
+  $('#preferredAudioLanguage').innerHTML = options;
+  $('#preferredSubtitleLanguage').innerHTML = options;
+}
+
 function renderSettings() {
   const s = state.settings ?? {};
+  if (state.languages.length) renderLanguageSelects();
   $('#preferredAudioLanguage').value = s.preferredAudioLanguage ?? 'pl';
   $('#preferredSubtitleLanguage').value = s.preferredSubtitleLanguage ?? 'pl';
   $('#defaultTranscodeBufferPreset').value = s.defaultTranscodeBufferPreset ?? 'auto';
@@ -475,6 +570,29 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function runButtonAction(button, loadingLabel, action) {
+  const previous = button.textContent;
+  button.disabled = true;
+  button.classList.add('loading');
+  button.textContent = loadingLabel;
+  try {
+    await action();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Operacja nie powiodła się.');
+    throw error;
+  } finally {
+    button.disabled = false;
+    button.classList.remove('loading');
+    button.textContent = previous;
+  }
+}
+
+function updateDiagnosticsOutputSize() {
+  const output = $('#diagnosticsOutput');
+  output.classList.remove('small', 'large', 'full');
+  output.classList.add($('#diagnosticsOutputSize').value);
+}
+
 function getInstallBaseUrl() {
   return (state.settings?.publicBaseUrl || window.location.origin).replace(/\/$/, '');
 }
@@ -494,6 +612,11 @@ async function copyText(value, message) {
   } catch {
     toast(value);
   }
+}
+
+function languageLabel(code) {
+  const language = state.languages.find((item) => item.code === code);
+  return language ? language.label : (code ?? '-');
 }
 
 function formatStats(stats = {}) {
@@ -522,7 +645,7 @@ function toast(message) {
   if (!el) return;
   el.textContent = message;
   el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 2500);
+  setTimeout(() => el.classList.add('hidden'), 3200);
 }
 
 function escapeHtml(value) {
