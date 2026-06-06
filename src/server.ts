@@ -9,6 +9,7 @@ import { addonManifest } from "./stremio/manifest.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
+import { registerTranscodeRoutes } from "./transcoding/transcode-routes.js";
 
 runMigrations(getDatabase());
 
@@ -20,6 +21,7 @@ const app = Fastify({
 
 await app.register(cors, { origin: true });
 await app.register(registerAdminRoutes);
+await app.register(registerTranscodeRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
 
@@ -54,11 +56,6 @@ app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (re
   }
 
   reply.redirect(original.originalUrl);
-});
-
-app.get("/transcode/:streamId/:quality/master.m3u8", async (_request, reply) => {
-  reply.code(501);
-  return { error: "Transcoding from selected original is not implemented yet." };
 });
 
 await app.listen({ host: env.HOST, port: env.PORT });
