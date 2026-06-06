@@ -7,7 +7,7 @@ import type { BufferPreset } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import { writeSystemLog } from "../system/system-log.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
-import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession } from "./transcode-session.js";
+import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession, listTranscodeSessions } from "./transcode-session.js";
 
 const playlistParamsSchema = z.object({
   streamId: z.string().min(1),
@@ -19,6 +19,8 @@ const segmentParamsSchema = playlistParamsSchema.extend({
 });
 
 export async function registerTranscodeRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/transcode/sessions", async () => ({ sessions: listTranscodeSessions() }));
+
   app.get<{ Params: { streamId: string; quality: string }; Querystring: { buffer?: string } }>(
     "/transcode/:streamId/:quality/master.m3u8",
     async (request, reply) => {
@@ -43,6 +45,8 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
           streamId: session.streamId,
           quality: session.quality,
           status: session.status,
+          speed: session.progress?.speed,
+          fps: session.progress?.fps,
           error: session.error
         });
         reply.code(session.status === "failed" ? 500 : 503);
