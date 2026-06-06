@@ -11,9 +11,20 @@ export type AppSettings = {
   publicBaseUrl?: string;
   autoRefreshCache: boolean;
   showDiagnosticDetails: boolean;
+  autoTranscodeMinQuality: string;
+  autoTranscodeMaxQuality: string;
+  transcodePreset: string;
+  transcodeCrfMode: string;
+  transcodeCrfMin: number;
+  transcodeCrfMax: number;
+  transcodeBitrateMode: string;
+  transcodeBitrateMinKbps: number;
+  transcodeBitrateMaxKbps: number;
 };
 
 const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language.code));
+export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "4k"] as const;
+export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
@@ -23,7 +34,16 @@ const defaults: AppSettings = {
   maxTranscodeSessions: env.MAX_TRANSCODE_SESSIONS,
   publicBaseUrl: env.PUBLIC_BASE_URL,
   autoRefreshCache: true,
-  showDiagnosticDetails: true
+  showDiagnosticDetails: true,
+  autoTranscodeMinQuality: "144p",
+  autoTranscodeMaxQuality: "1080p",
+  transcodePreset: "veryfast",
+  transcodeCrfMode: "auto",
+  transcodeCrfMin: 22,
+  transcodeCrfMax: 26,
+  transcodeBitrateMode: "auto",
+  transcodeBitrateMinKbps: 1000,
+  transcodeBitrateMaxKbps: 6000
 };
 
 export function getAppSettings(): AppSettings {
@@ -33,10 +53,10 @@ export function getAppSettings(): AppSettings {
 
   const settings = { ...defaults };
   for (const row of rows) {
-    if (row.key === "streamValidationTimeoutMs" || row.key === "maxTranscodeSessions") {
+    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps"].includes(row.key)) {
       const parsed = Number.parseInt(row.value, 10);
       if (Number.isFinite(parsed)) {
-        settings[row.key] = parsed;
+        (settings as Record<string, unknown>)[row.key] = parsed;
       }
       continue;
     }
@@ -57,10 +77,10 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    settings[row.key] = row.value as never;
+    (settings as Record<string, unknown>)[row.key] = row.value;
   }
 
-  return settings;
+  return normalizeTranscodeSettings(settings);
 }
 
 export function updateAppSettings(input: Partial<AppSettings>): AppSettings {
@@ -72,9 +92,10 @@ export function updateAppSettings(input: Partial<AppSettings>): AppSettings {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `);
 
+  const sanitized = normalizeTranscodeSettings({ ...getAppSettings(), ...input });
   const transaction = getDatabase().transaction(() => {
     for (const key of allowedKeys) {
-      let value = input[key];
+      let value = sanitized[key];
       if (value === undefined) {
         continue;
       }
@@ -107,13 +128,44 @@ export function getEffectiveTranscodeBufferPreset(): string {
   return getAppSettings().defaultTranscodeBufferPreset;
 }
 
+export function getEffectiveTranscodeSettings(): AppSettings {
+  return getAppSettings();
+}
+
 function normalizeLanguageCode(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return DEFAULT_PREFERRED_LANGUAGE;
-
-  // Early UI versions could accidentally submit Albanian because it was the first option.
-  // Treat that accidental default as Polish unless the user later explicitly changes it in a fixed UI.
   if (normalized === "sq") return DEFAULT_PREFERRED_LANGUAGE;
-
   return validLanguageCodes.has(normalized) ? normalized : DEFAULT_PREFERRED_LANGUAGE;
+}
+
+function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
+  const normalized = { ...settings };
+  if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMinQuality as never)) normalized.autoTranscodeMinQuality = defaults.autoTranscodeMinQuality;
+  if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMaxQuality as never)) normalized.autoTranscodeMaxQuality = defaults.autoTranscodeMaxQuality;
+
+  const minIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMinQuality as never);
+  const maxIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMaxQuality as never);
+  if (minIndex > maxIndex) {
+    normalized.autoTranscodeMinQuality = normalized.autoTranscodeMaxQuality;
+  }
+
+  if (!TRANSCODE_PRESETS.includes(normalized.transcodePreset as never)) normalized.transcodePreset = defaults.transcodePreset;
+  if (!["auto", "range"].includes(normalized.transcodeCrfMode)) normalized.transcodeCrfMode = "auto";
+  if (!["auto", "range"].includes(normalized.transcodeBitrateMode)) normalized.transcodeBitrateMode = "auto";
+
+  normalized.transcodeCrfMin = clampNumber(normalized.transcodeCrfMin, 16, 35, defaults.transcodeCrfMin);
+  normalized.transcodeCrfMax = clampNumber(normalized.transcodeCrfMax, 16, 35, defaults.transcodeCrfMax);
+  if (normalized.transcodeCrfMin > normalized.transcodeCrfMax) normalized.transcodeCrfMin = normalized.transcodeCrfMax;
+
+  normalized.transcodeBitrateMinKbps = clampNumber(normalized.transcodeBitrateMinKbps, 150, 50000, defaults.transcodeBitrateMinKbps);
+  normalized.transcodeBitrateMaxKbps = clampNumber(normalized.transcodeBitrateMaxKbps, 150, 50000, defaults.transcodeBitrateMaxKbps);
+  if (normalized.transcodeBitrateMinKbps > normalized.transcodeBitrateMaxKbps) normalized.transcodeBitrateMinKbps = normalized.transcodeBitrateMaxKbps;
+
+  return normalized;
+}
+
+function clampNumber(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
 }
