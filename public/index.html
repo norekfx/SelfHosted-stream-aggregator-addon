@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SelfHosted Stream Aggregator</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">SA</div>
+          <div>
+            <strong>Stream Aggregator</strong>
+            <span>Self-hosted panel</span>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-item active" data-view="dashboard">Dashboard</button>
+          <button class="nav-item" data-view="addons">Addony</button>
+          <button class="nav-item" data-view="cache">Cache</button>
+          <button class="nav-item" data-view="history">Historia</button>
+          <button class="nav-item" data-view="diagnostics">Diagnostyka</button>
+          <button class="nav-item" data-view="settings">Ustawienia</button>
+        </nav>
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          <span id="healthLabel">Sprawdzanie...</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 id="viewTitle">Dashboard</h1>
+            <p id="viewSubtitle">Szybki podgląd działania agregatora.</p>
+          </div>
+          <div class="top-actions">
+            <a class="ghost-link" href="/manifest.json" target="_blank" rel="noreferrer">Manifest</a>
+            <button id="refreshBtn" class="primary-btn">Odśwież</button>
+          </div>
+        </header>
+
+        <section id="toast" class="toast hidden"></section>
+
+        <section id="dashboard" class="view active">
+          <div class="stats-grid">
+            <article class="stat-card"><span>Addony</span><strong id="statAddons">-</strong><small>skonfigurowane</small></article>
+            <article class="stat-card"><span>Online</span><strong id="statOnline">-</strong><small>gotowe do streamów</small></article>
+            <article class="stat-card"><span>Cache</span><strong id="statCache">-</strong><small>zapamiętane wyniki</small></article>
+            <article class="stat-card"><span>Historia</span><strong id="statHistory">-</strong><small>ostatnie wyszukiwania</small></article>
+          </div>
+          <div class="panel-grid two">
+            <article class="panel">
+              <div class="panel-header"><h2>Ostatni cache</h2></div>
+              <div id="recentCache" class="list empty">Brak danych.</div>
+            </article>
+            <article class="panel">
+              <div class="panel-header"><h2>Ustawienia robocze</h2></div>
+              <div id="settingsSummary" class="kv-list"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="addons" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Dodaj addon</h2></div>
+            <form id="addonForm" class="inline-form">
+              <input id="addonUrl" type="url" placeholder="https://addon.example.com/manifest.json" required />
+              <button class="primary-btn" type="submit">Dodaj</button>
+            </form>
+          </article>
+          <article class="panel">
+            <div class="panel-header"><h2>Zarejestrowane addony</h2></div>
+            <div id="addonsList" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <section id="cache" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Zapamiętane wyniki</h2><button class="ghost-btn" id="reloadCacheBtn">Odśwież listę</button></div>
+            <div id="cacheList" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <section id="history" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Historia wyszukiwań</h2></div>
+            <div id="historyList" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <section id="diagnostics" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Test agregacji</h2></div>
+            <form id="diagnosticsForm" class="inline-form compact">
+              <select id="diagType"><option value="movie">movie</option><option value="series">series</option></select>
+              <input id="diagId" placeholder="tt0133093" value="tt0133093" />
+              <button class="primary-btn" type="submit">Uruchom</button>
+            </form>
+          </article>
+          <article class="panel">
+            <div class="panel-header"><h2>Wynik diagnostyki</h2></div>
+            <pre id="diagnosticsOutput" class="code-box">Brak wyniku.</pre>
+          </article>
+        </section>
+
+        <section id="settings" class="view">
+          <article class="panel">
+            <div class="panel-header"><h2>Ustawienia użytkowe</h2></div>
+            <form id="settingsForm" class="settings-form">
+              <label>Preferowany język audio<input id="preferredAudioLanguage" placeholder="pl" /></label>
+              <label>Preferowany język napisów<input id="preferredSubtitleLanguage" placeholder="pl" /></label>
+              <label>Domyślny bufor transkodowania
+                <select id="defaultTranscodeBufferPreset">
+                  <option value="disabled">Wyłączony</option>
+                  <option value="auto">Automatyczny bufor</option>
+                  <option value="2s">2 sek</option>
+                  <option value="5s">5 sek</option>
+                  <option value="10s">10 sek</option>
+                  <option value="15s">15 sek</option>
+                  <option value="20s">20 sek</option>
+                  <option value="30s">30 sek</option>
+                  <option value="45s">45 sek</option>
+                  <option value="60s">60 sek</option>
+                </select>
+              </label>
+              <label>Timeout walidacji streamu ms<input id="streamValidationTimeoutMs" type="number" min="1000" max="120000" /></label>
+              <label>Limit sesji transkodowania<input id="maxTranscodeSessions" type="number" min="1" max="16" /></label>
+              <label>Publiczny URL przez Cloudflare<input id="publicBaseUrl" placeholder="https://streams.example.com" /></label>
+              <label class="checkbox"><input id="autoRefreshCache" type="checkbox" /> Odświeżaj cache w tle</label>
+              <label class="checkbox"><input id="showDiagnosticDetails" type="checkbox" /> Pokazuj szczegóły diagnostyczne</label>
+              <button class="primary-btn" type="submit">Zapisz ustawienia</button>
+            </form>
+          </article>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
