@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getEffectiveTranscodeBufferPreset } from "../settings/app-settings.js";
 import type { BufferPreset } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
+import { writeSystemLog } from "../system/system-log.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
 import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession } from "./transcode-session.js";
 
@@ -35,15 +36,19 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
       }
 
       const session = getOrCreateTranscodeSession(original, params.data.quality, bufferPreset);
-      if (!existsSync(session.playlistPath)) {
-        reply.code(202);
-        return {
-          status: session.status,
-          message: "Transcode session is starting. Retry this playlist shortly.",
+      const playlistReady = await waitForPlaylist(session.playlistPath, 12_000);
+      if (!playlistReady) {
+        writeSystemLog("warn", "transcode", "Playlist was not ready before the player timeout.", {
           sessionId: session.id,
-          bufferPreset: session.bufferPreset,
+          streamId: session.streamId,
+          quality: session.quality,
+          status: session.status,
           error: session.error
-        };
+        });
+        reply.code(session.status === "failed" ? 500 : 503);
+        reply.header("content-type", "application/vnd.apple.mpegurl");
+        reply.header("cache-control", "no-store");
+        return "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-ENDLIST\n";
       }
 
       reply.header("content-type", "application/vnd.apple.mpegurl");
@@ -90,4 +95,15 @@ function resolveBufferPreset(value: string | undefined): BufferPreset {
 
   const setting = getEffectiveTranscodeBufferPreset();
   return isBufferPreset(setting) ? setting : "auto";
+}
+
+async function waitForPlaylist(path: string, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (existsSync(path)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
 }
