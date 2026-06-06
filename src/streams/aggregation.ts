@@ -1,6 +1,8 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
+import { parseStreamMetadata } from "./parse-stream-metadata.js";
+import type { NormalizedStreamMetadata } from "./stream-metadata.js";
 import type { StreamType } from "./types.js";
 
 export type RawAggregatedStream = {
@@ -14,6 +16,7 @@ export type RawAggregatedStream = {
   fileIdx?: number;
   sources?: string[];
   behaviorHints?: Record<string, unknown>;
+  metadata: NormalizedStreamMetadata;
 };
 
 export type AggregationResult = {
@@ -56,6 +59,8 @@ function isStreamAddonEnabled(addon: RegisteredAddon): boolean {
 }
 
 function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream): RawAggregatedStream {
+  const filename = typeof stream.behaviorHints?.filename === "string" ? stream.behaviorHints.filename : undefined;
+
   return {
     addonId: addon.id,
     addonName: addon.name,
@@ -66,6 +71,7 @@ function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream
     infoHash: stream.infoHash,
     fileIdx: stream.fileIdx,
     sources: stream.sources,
-    behaviorHints: stream.behaviorHints
+    behaviorHints: stream.behaviorHints,
+    metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename })
   };
 }
