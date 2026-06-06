@@ -1,3 +1,4 @@
+import { getAppSettings } from "../settings/app-settings.js";
 import { aggregateStreams } from "../streams/aggregation.js";
 import { saveSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream, StreamType } from "../streams/types.js";
@@ -13,11 +14,16 @@ const activeRefreshes = new Set<string>();
 
 export async function getBestOriginalWithCache(type: StreamType, id: string): Promise<AggregatedStream | null> {
   const cached = getCachedSearchResult(type, id);
+  const settings = getAppSettings();
 
   if (cached?.selectedOriginal && cached.status === "working") {
     saveSelectedOriginal(cached.selectedOriginal);
     markCacheServed(type, id);
-    refreshInBackground(type, id);
+
+    if (settings.autoRefreshCache) {
+      refreshInBackground(type, id);
+    }
+
     return cached.selectedOriginal;
   }
 
