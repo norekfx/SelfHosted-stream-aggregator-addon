@@ -12,11 +12,12 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 - `GET /health` - health check.
 - `GET /manifest.json` - Stremio-compatible addon manifest.
 - `GET /stream/:type/:id.json` - stream endpoint for `movie` and `series` IDs.
-- Protected admin API under `/admin/*` for settings, addons, cache, history and diagnostics.
+- Protected admin API under `/admin/*` for settings, addons, cache, history, diagnostics and system logs.
+- `GET /admin/system/health`, `GET /admin/system/logs`, `DELETE /admin/system/logs` - technical health-check and log panel APIs.
 - `GET /proxy/original/:streamId` - redirects the `Original` option to the selected original file.
 - `GET /transcode/:streamId/:quality/master.m3u8` - starts or returns an FFmpeg HLS transcode playlist from the selected original.
 - `GET /transcode/:streamId/:quality/:segment` - returns generated HLS `.ts` segments.
-- SQLite persistence for addons, settings, auth users/sessions, search cache, selected originals and search history at `/data/db/aggregator.sqlite` by default.
+- SQLite persistence for addons, settings, auth users/sessions, search cache, selected originals, system logs and search history at `/data/db/aggregator.sqlite` by default.
 - European language registry with Polish as the default preferred audio/subtitle language.
 - Stream metadata parser for quality, release source, codec, size, audio kind, audio language and subtitle language.
 - HTTP stream validator using `HEAD`, fallback `Range` GET, timeout, HTTP status, content type, content length and range support.
@@ -25,6 +26,7 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 - Buffer presets: disabled, auto, 2s, 5s, 10s, 15s, 20s, 30s, 45s, 60s.
 - FFmpeg/HLS transcode session manager for `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`.
 - Docker and Docker Compose files for TrueNAS Scale-style self-hosting.
+- GitHub Actions CI for TypeScript typecheck and build.
 
 Important playback rule: `Original` is the original selected file. All quality options such as `Auto`, `4K`, `1080p` and `720p` are server-side transcodes generated from that same selected original, not separate streams from different addons.
 
@@ -66,6 +68,8 @@ Protected endpoints:
 - `/admin/aggregate/:type/:id`
 - `/admin/cache`
 - `/admin/history`
+- `/admin/system/health`
+- `/admin/system/logs`
 - `/auth/sessions`
 - `/auth/change-password`
 - `/auth/logout-other-sessions`
@@ -74,10 +78,12 @@ Protected endpoints:
 Panel sections:
 
 - Dashboard - addon/cache/history summary.
+- Instalacja - ready-to-copy manifest URL, test stream URL and Stremio/Nuvio readiness checklist.
 - Addony - add addon by manifest URL, check status, enable/disable.
 - Cache - inspect remembered movie/series selections and force refresh.
 - Historia - view persisted searches and selected files.
 - Diagnostyka - run manual aggregation for a movie or series ID.
+- System - technical health-check and small error log panel.
 - Ustawienia - preferred languages, buffer preset, validation timeout, transcode session limit, public URL and diagnostic toggles.
 - Bezpieczeństwo - change password, view sessions, log out other sessions, log out all sessions.
 
@@ -115,6 +121,13 @@ Run parser examples:
 npm run examples:metadata
 ```
 
+Run local checks:
+
+```bash
+npm run typecheck
+npm run build
+```
+
 ## Docker
 
 ```bash
@@ -122,7 +135,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The runtime image installs FFmpeg automatically and includes the static admin panel assets.
+The runtime image installs FFmpeg automatically and includes the static admin panel assets. Native Node modules such as `better-sqlite3` are built in the dependency stage before the production runtime image is assembled.
 
 ## TrueNAS Scale notes
 
@@ -149,5 +162,6 @@ Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BAS
 5. Validate streams before exposing them: `HEAD`, partial `GET`, timeout handling, `ffprobe` where possible. **Started.**
 6. Select best original stream using preferred European audio/subtitle language rules. **Started.**
 7. Add FFmpeg HLS transcoding sessions for `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`. **Started.**
-8. Add admin web UI: addon management, status, search history, validation logs and selected file history. **Started.**
+8. Add admin web UI: addon management, install panel, status, search history, validation logs and selected file history. **Started.**
 9. Add first-run registration, admin login and security panel. **Started.**
+10. Add CI, technical health-check and system log panel. **Started.**
