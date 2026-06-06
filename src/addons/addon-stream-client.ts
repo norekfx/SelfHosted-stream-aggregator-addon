@@ -5,6 +5,7 @@ import type { StreamType } from "../streams/types.js";
 const stremioStreamSchema = z.object({
   name: z.string().optional(),
   title: z.string().optional(),
+  description: z.string().optional(),
   url: z.string().url().optional(),
   externalUrl: z.string().url().optional(),
   infoHash: z.string().optional(),
