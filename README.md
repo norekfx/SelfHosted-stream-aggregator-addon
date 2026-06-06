@@ -6,9 +6,11 @@ Self-hosted Stremio/Nuvio addon aggregator focused on validating streams, select
 
 The repository now contains the first working TypeScript/Fastify scaffold:
 
+- `GET /` - modern dark admin web panel.
 - `GET /health` - health check.
 - `GET /manifest.json` - Stremio-compatible addon manifest.
 - `GET /stream/:type/:id.json` - stream endpoint for `movie` and `series` IDs.
+- `GET /admin/settings` and `PATCH /admin/settings` - persistent app settings.
 - `GET /admin/addons` - list configured external addons.
 - `POST /admin/addons` - register an external addon by manifest URL.
 - `POST /admin/addons/:addonId/check` - manually refresh addon health.
@@ -20,7 +22,7 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 - `GET /proxy/original/:streamId` - redirects the `Original` option to the selected original file.
 - `GET /transcode/:streamId/:quality/master.m3u8` - starts or returns an FFmpeg HLS transcode playlist from the selected original.
 - `GET /transcode/:streamId/:quality/:segment` - returns generated HLS `.ts` segments.
-- SQLite persistence for addons, search cache, selected originals and search history at `/data/db/aggregator.sqlite` by default.
+- SQLite persistence for addons, settings, search cache, selected originals and search history at `/data/db/aggregator.sqlite` by default.
 - European language registry with Polish as the default preferred audio/subtitle language.
 - Stream metadata parser for quality, release source, codec, size, audio kind, audio language and subtitle language.
 - HTTP stream validator using `HEAD`, fallback `Range` GET, timeout, HTTP status, content type, content length and range support.
@@ -34,6 +36,23 @@ Important playback rule: `Original` is the original selected file. All quality o
 
 The stream endpoint uses the stored working result immediately when available, then refreshes the search in the background. If there is no cache yet, it performs a full aggregation, validation and ranking before returning options.
 
+## Admin panel
+
+Open the panel at:
+
+```text
+http://localhost:7000/
+```
+
+Panel sections:
+
+- Dashboard - addon/cache/history summary.
+- Addony - add addon by manifest URL, check status, enable/disable.
+- Cache - inspect remembered movie/series selections and force refresh.
+- Historia - view persisted searches and selected files.
+- Diagnostyka - run manual aggregation for a movie or series ID.
+- Ustawienia - preferred languages, buffer preset, validation timeout, transcode session limit, public URL and diagnostic toggles.
+
 ## Development
 
 ```bash
@@ -45,6 +64,7 @@ npm run dev
 Open:
 
 ```text
+http://localhost:7000/
 http://localhost:7000/manifest.json
 http://localhost:7000/stream/movie/tt0133093.json
 ```
@@ -91,7 +111,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The runtime image installs FFmpeg automatically.
+The runtime image installs FFmpeg automatically and includes the static admin panel assets.
 
 ## TrueNAS Scale notes
 
@@ -118,4 +138,4 @@ Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BAS
 5. Validate streams before exposing them: `HEAD`, partial `GET`, timeout handling, `ffprobe` where possible. **Started.**
 6. Select best original stream using preferred European audio/subtitle language rules. **Started.**
 7. Add FFmpeg HLS transcoding sessions for `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`. **Started.**
-8. Add admin web UI: addon management, status, search history, validation logs and selected file history.
+8. Add admin web UI: addon management, status, search history, validation logs and selected file history. **Started.**
