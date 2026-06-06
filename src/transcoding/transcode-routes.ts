@@ -3,13 +3,14 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getEffectiveTranscodeBufferPreset } from "../settings/app-settings.js";
+import type { BufferPreset } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
 import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession } from "./transcode-session.js";
 
 const playlistParamsSchema = z.object({
   streamId: z.string().min(1),
-  quality: z.string().refine(isTranscodeQuality, "Invalid transcode quality")
+  quality: z.string()
 });
 
 const segmentParamsSchema = playlistParamsSchema.extend({
@@ -21,9 +22,9 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
     "/transcode/:streamId/:quality/master.m3u8",
     async (request, reply) => {
       const params = playlistParamsSchema.safeParse(request.params);
-      if (!params.success) {
+      if (!params.success || !isTranscodeQuality(params.data.quality)) {
         reply.code(400);
-        return { error: "Invalid transcode request.", details: params.error.flatten() };
+        return { error: "Invalid transcode request.", details: params.success ? "Invalid transcode quality." : params.error.flatten() };
       }
 
       const bufferPreset = resolveBufferPreset(request.query.buffer);
@@ -55,9 +56,9 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
     "/transcode/:streamId/:quality/:segment",
     async (request, reply) => {
       const params = segmentParamsSchema.safeParse(request.params);
-      if (!params.success) {
+      if (!params.success || !isTranscodeQuality(params.data.quality)) {
         reply.code(400);
-        return { error: "Invalid transcode segment request.", details: params.error.flatten() };
+        return { error: "Invalid transcode segment request.", details: params.success ? "Invalid transcode quality." : params.error.flatten() };
       }
 
       const bufferPreset = resolveBufferPreset(request.query.buffer);
@@ -81,7 +82,7 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
   );
 }
 
-function resolveBufferPreset(value: string | undefined) {
+function resolveBufferPreset(value: string | undefined): BufferPreset {
   if (isBufferPreset(value ?? "")) {
     return value;
   }
