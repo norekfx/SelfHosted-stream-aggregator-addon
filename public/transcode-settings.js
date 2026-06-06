@@ -308,7 +308,7 @@ function showVodToast(message) {
   if (!el) return;
   el.textContent = message;
   el.classList.remove("hidden");
-  setTimeout(() => el.classList.add("hidden", 3200));
+  setTimeout(() => el.classList.add("hidden"), 3200);
 }
 
 installLogLevelMemory();
