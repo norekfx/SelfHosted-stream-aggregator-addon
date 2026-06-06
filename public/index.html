@@ -132,20 +132,29 @@
             <div class="panel-header"><h2>Historia wyszukiwań</h2></div>
             <div id="historyList" class="table-wrap"></div>
           </article>
+          <article class="panel">
+            <div class="panel-header"><h2>Szczegóły wyszukiwania</h2></div>
+            <div id="historyDetails" class="history-details list empty">Wybierz wpis z historii.</div>
+          </article>
         </section>
 
         <section id="diagnostics" class="view">
           <article class="panel">
             <div class="panel-header"><h2>Test agregacji</h2></div>
-            <form id="diagnosticsForm" class="inline-form compact">
+            <form id="diagnosticsForm" class="inline-form diagnostic-form">
               <select id="diagType"><option value="movie">movie</option><option value="series">series</option></select>
               <input id="diagId" placeholder="tt0133093" value="tt0133093" />
-              <button class="primary-btn" type="submit">Uruchom</button>
+              <select id="diagnosticsOutputSize">
+                <option value="small">Małe okno logów</option>
+                <option value="large">Duże okno</option>
+                <option value="full">Pełne</option>
+              </select>
+              <button id="runDiagnosticsBtn" class="primary-btn" type="submit">Uruchom</button>
             </form>
           </article>
           <article class="panel">
             <div class="panel-header"><h2>Wynik diagnostyki</h2></div>
-            <pre id="diagnosticsOutput" class="code-box">Brak wyniku.</pre>
+            <pre id="diagnosticsOutput" class="code-box small">Brak wyniku.</pre>
           </article>
         </section>
 
@@ -156,11 +165,11 @@
           </article>
           <article class="panel">
             <div class="panel-header">
-              <h2>Log błędów</h2>
+              <h2>Logi systemowe</h2>
               <div class="inline-actions">
                 <select id="logLevelFilter">
-                  <option value="">Wszystkie</option>
-                  <option value="error">Błędy</option>
+                  <option value="">Pełne logi</option>
+                  <option value="error">Tylko błędy</option>
                   <option value="warn">Ostrzeżenia</option>
                   <option value="info">Info</option>
                   <option value="debug">Debug</option>
@@ -177,8 +186,8 @@
           <article class="panel">
             <div class="panel-header"><h2>Ustawienia użytkowe</h2></div>
             <form id="settingsForm" class="settings-form">
-              <label>Preferowany język audio<input id="preferredAudioLanguage" placeholder="pl" /></label>
-              <label>Preferowany język napisów<input id="preferredSubtitleLanguage" placeholder="pl" /></label>
+              <label>Preferowany język audio<select id="preferredAudioLanguage"></select></label>
+              <label>Preferowany język napisów<select id="preferredSubtitleLanguage"></select></label>
               <label>Domyślny bufor transkodowania
                 <select id="defaultTranscodeBufferPreset">
                   <option value="disabled">Wyłączony</option>
