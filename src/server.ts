@@ -30,7 +30,10 @@ const app = Fastify({
 await app.register(cors, { origin: true });
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
-await app.register(registerAdminRoutes, { prefix: "", preHandler: requireAdminAuth });
+await app.register(async (adminApp) => {
+  adminApp.addHook("preHandler", requireAdminAuth);
+  await registerAdminRoutes(adminApp);
+});
 await app.register(registerTranscodeRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
