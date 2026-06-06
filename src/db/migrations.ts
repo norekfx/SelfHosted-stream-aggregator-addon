@@ -71,6 +71,17 @@ const migrations: Array<{ id: number; name: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_search_history_cache_key ON search_history(cache_key);
       CREATE INDEX IF NOT EXISTS idx_search_history_searched_at ON search_history(searched_at);
     `
+  },
+  {
+    id: 3,
+    name: "create_app_settings",
+    sql: `
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `
   }
 ];
 
