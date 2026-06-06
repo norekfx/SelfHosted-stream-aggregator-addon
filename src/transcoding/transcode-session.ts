@@ -23,6 +23,16 @@ export type TranscodeSession = {
   startedAt: string;
   updatedAt: string;
   error?: string;
+  lastLog?: string;
+  stopReason?: string;
+  progress?: {
+    frame?: number;
+    fps?: number;
+    bitrate?: string;
+    outTime?: string;
+    speed?: string;
+    progress?: string;
+  };
   process?: ChildProcessWithoutNullStreams;
 };
 
@@ -30,6 +40,13 @@ const sessions = new Map<string, TranscodeSession>();
 
 export function getTranscodeSession(sessionId: string): TranscodeSession | undefined {
   return sessions.get(sessionId);
+}
+
+export function listTranscodeSessions(): Array<Omit<TranscodeSession, "process">> {
+  return Array.from(sessions.values())
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .slice(0, 50)
+    .map(({ process: _process, ...session }) => session);
 }
 
 export function getOrCreateTranscodeSession(
@@ -81,10 +98,14 @@ function startFfmpeg(session: TranscodeSession): void {
 
   child.stderr.on("data", (chunk) => {
     const text = chunk.toString();
-    if (/error|invalid|failed|warning/i.test(text)) {
+    session.lastLog = text.slice(-2000);
+    parseFfmpegProgress(session, text);
+
+    if (/error|invalid|failed/i.test(text)) {
       session.error = text.slice(-2000);
-      session.updatedAt = new Date().toISOString();
     }
+
+    session.updatedAt = new Date().toISOString();
   });
 
   child.on("error", (error) => {
@@ -99,17 +120,33 @@ function startFfmpeg(session: TranscodeSession): void {
     });
   });
 
-  child.on("exit", (code) => {
-    session.status = code === 0 ? "exited" : "failed";
-    session.error = code === 0 ? session.error : session.error ?? `FFmpeg exited with code ${code}.`;
+  child.on("exit", (code, signal) => {
+    session.process = undefined;
     session.updatedAt = new Date().toISOString();
 
-    if (code !== 0) {
-      writeSystemLog("error", "transcode", session.error ?? `FFmpeg exited with code ${code}.`, {
+    if (session.stopReason) {
+      session.status = "exited";
+      session.lastLog = session.stopReason;
+      writeSystemLog("info", "transcode", "FFmpeg session stopped intentionally.", {
         sessionId: session.id,
         streamId: session.streamId,
         quality: session.quality,
-        bufferPreset: session.bufferPreset
+        bufferPreset: session.bufferPreset,
+        reason: session.stopReason,
+        signal
+      });
+      return;
+    }
+
+    session.status = code === 0 ? "exited" : "failed";
+    if (code !== 0) {
+      session.error = session.error ?? `FFmpeg exited with code ${code}${signal ? `, signal ${signal}` : ""}.`;
+      writeSystemLog("error", "transcode", session.error, {
+        sessionId: session.id,
+        streamId: session.streamId,
+        quality: session.quality,
+        bufferPreset: session.bufferPreset,
+        signal
       });
     }
   });
@@ -121,6 +158,9 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
     "-hide_banner",
     "-loglevel",
     "warning",
+    "-nostats",
+    "-progress",
+    "pipe:2",
     "-fflags",
     "+genpts",
     "-reconnect",
@@ -203,6 +243,7 @@ function enforceSessionLimit(): void {
 
   const oldest = runningSessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0];
   if (oldest?.process) {
+    oldest.stopReason = "session limit reached";
     oldest.process.kill("SIGTERM");
     oldest.status = "exited";
     oldest.updatedAt = new Date().toISOString();
@@ -212,6 +253,22 @@ function enforceSessionLimit(): void {
       quality: oldest.quality
     });
   }
+}
+
+function parseFfmpegProgress(session: TranscodeSession, text: string): void {
+  const progress = session.progress ?? {};
+  for (const line of text.split(/\r?\n/)) {
+    const [key, value] = line.split("=", 2);
+    if (!key || value === undefined) continue;
+
+    if (key === "frame") progress.frame = Number.parseInt(value, 10);
+    if (key === "fps") progress.fps = Number.parseFloat(value);
+    if (key === "bitrate") progress.bitrate = value;
+    if (key === "out_time") progress.outTime = value;
+    if (key === "speed") progress.speed = value;
+    if (key === "progress") progress.progress = value;
+  }
+  session.progress = progress;
 }
 
 export function createTranscodeSessionId(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset): string {
