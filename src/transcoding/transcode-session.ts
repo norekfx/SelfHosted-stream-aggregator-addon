@@ -5,6 +5,7 @@ import { env, getTranscodeCacheDir } from "../config/env.js";
 import { getEffectiveMaxTranscodeSessions } from "../settings/app-settings.js";
 import type { BufferPreset, TranscodeQuality } from "../stremio/manifest.js";
 import type { AggregatedStream } from "../streams/types.js";
+import { writeSystemLog } from "../system/system-log.js";
 import { getTranscodeProfile, type TranscodeProfile } from "./transcode-profiles.js";
 
 export type TranscodeSessionStatus = "starting" | "running" | "exited" | "failed";
@@ -90,12 +91,27 @@ function startFfmpeg(session: TranscodeSession): void {
     session.status = "failed";
     session.error = error.message;
     session.updatedAt = new Date().toISOString();
+    writeSystemLog("error", "transcode", error.message, {
+      sessionId: session.id,
+      streamId: session.streamId,
+      quality: session.quality,
+      bufferPreset: session.bufferPreset
+    });
   });
 
   child.on("exit", (code) => {
     session.status = code === 0 ? "exited" : "failed";
     session.error = code === 0 ? session.error : session.error ?? `FFmpeg exited with code ${code}.`;
     session.updatedAt = new Date().toISOString();
+
+    if (code !== 0) {
+      writeSystemLog("error", "transcode", session.error ?? `FFmpeg exited with code ${code}.`, {
+        sessionId: session.id,
+        streamId: session.streamId,
+        quality: session.quality,
+        bufferPreset: session.bufferPreset
+      });
+    }
   });
 }
 
@@ -169,6 +185,11 @@ function enforceSessionLimit(): void {
     oldest.process.kill("SIGTERM");
     oldest.status = "exited";
     oldest.updatedAt = new Date().toISOString();
+    writeSystemLog("warn", "transcode", "Stopped oldest transcode session because the session limit was reached.", {
+      sessionId: oldest.id,
+      streamId: oldest.streamId,
+      quality: oldest.quality
+    });
   }
 }
 
