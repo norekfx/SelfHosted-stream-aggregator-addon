@@ -7,7 +7,8 @@ const TRANSCODE_SETTING_FIELDS = [
   "transcodeCrfMax",
   "transcodeBitrateMode",
   "transcodeBitrateMinKbps",
-  "transcodeBitrateMaxKbps"
+  "transcodeBitrateMaxKbps",
+  "linkValidationMode"
 ];
 
 const LOG_LEVEL_STORAGE_KEY = "selfhosted-stream-aggregator:log-level-filter";
@@ -50,7 +51,8 @@ function fillTranscodeSettings(settings) {
     transcodeCrfMax: 26,
     transcodeBitrateMode: "auto",
     transcodeBitrateMinKbps: 1000,
-    transcodeBitrateMaxKbps: 6000
+    transcodeBitrateMaxKbps: 6000,
+    linkValidationMode: "best"
   };
 
   for (const field of TRANSCODE_SETTING_FIELDS) {
@@ -58,6 +60,21 @@ function fillTranscodeSettings(settings) {
     if (!element) continue;
     element.value = settings[field] ?? defaults[field];
   }
+}
+
+function installLinkValidationSetting() {
+  const form = document.getElementById("settingsForm");
+  const timeout = document.getElementById("streamValidationTimeoutMs");
+  if (!form || !timeout || document.getElementById("linkValidationMode")) return;
+
+  const label = document.createElement("label");
+  label.innerHTML = `Walidacja linków<select id="linkValidationMode"><option value="best">Szukanie najlepszego</option><option value="all">Wszystkie</option><option value="5">5 najlepszych</option><option value="10">10 najlepszych</option><option value="20">20 najlepszych</option><option value="40">40 najlepszych</option><option value="80">80 najlepszych</option><option value="100">100 najlepszych</option><option value="150">150 najlepszych</option><option value="200">200 najlepszych</option></select>`;
+  timeout.closest("label")?.insertAdjacentElement("afterend", label);
+
+  originalFetch("/admin/settings")
+    .then((response) => response.json())
+    .then((data) => fillTranscodeSettings(data.settings ?? {}))
+    .catch(() => {});
 }
 
 function installLogLevelMemory() {
@@ -291,10 +308,11 @@ function showVodToast(message) {
   if (!el) return;
   el.textContent = message;
   el.classList.remove("hidden");
-  setTimeout(() => el.classList.add("hidden"), 3200);
+  setTimeout(() => el.classList.add("hidden", 3200));
 }
 
 installLogLevelMemory();
+installLinkValidationSetting();
 installSystemTranscodePanel();
 
 setInterval(() => {
@@ -308,6 +326,7 @@ setInterval(() => {
   }
 
   installLogLevelMemory();
+  installLinkValidationSetting();
   installSystemTranscodePanel();
   installDiagnosticVodUi();
   if (document.getElementById("systemTranscodePanel")) refreshSystemTranscodePanel();
