@@ -8,6 +8,7 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 
 - `GET /` - modern dark admin web panel with first-run registration and later login.
 - `GET /auth/status`, `POST /auth/register`, `POST /auth/login`, `POST /auth/logout` - admin authentication.
+- `GET /auth/sessions`, `POST /auth/change-password`, `POST /auth/logout-other-sessions`, `POST /auth/logout-all-sessions` - security panel actions.
 - `GET /health` - health check.
 - `GET /manifest.json` - Stremio-compatible addon manifest.
 - `GET /stream/:type/:id.json` - stream endpoint for `movie` and `series` IDs.
@@ -39,7 +40,17 @@ http://localhost:7000/
 
 On the first run there are no users, so the panel shows admin registration. After the first admin account is created, the same screen becomes a login form. Sessions are stored in SQLite and sent as an HTTP-only cookie.
 
-Public endpoints:
+Public endpoints required for Stremio/Nuvio playback remain public and do not require the admin cookie:
+
+- `/manifest.json`
+- `/stream/:type/:id.json`
+- `/proxy/original/:streamId`
+- `/transcode/:streamId/:quality/master.m3u8`
+- `/transcode/:streamId/:quality/:segment`
+
+This means Stremio/Nuvio can install and play from the addon without knowing the admin login. External addons added in the panel are also not affected by admin authentication, because the server calls their manifest and stream endpoints as a backend client; only local management endpoints under `/admin/*` are protected.
+
+Other public utility endpoints:
 
 - `/`
 - `/auth/status`
@@ -47,11 +58,6 @@ Public endpoints:
 - `/auth/login`
 - `/auth/logout`
 - `/health`
-- `/manifest.json`
-- `/stream/:type/:id.json`
-- `/proxy/original/:streamId`
-- `/transcode/:streamId/:quality/master.m3u8`
-- `/transcode/:streamId/:quality/:segment`
 
 Protected endpoints:
 
@@ -60,6 +66,10 @@ Protected endpoints:
 - `/admin/aggregate/:type/:id`
 - `/admin/cache`
 - `/admin/history`
+- `/auth/sessions`
+- `/auth/change-password`
+- `/auth/logout-other-sessions`
+- `/auth/logout-all-sessions`
 
 Panel sections:
 
@@ -69,6 +79,7 @@ Panel sections:
 - Historia - view persisted searches and selected files.
 - Diagnostyka - run manual aggregation for a movie or series ID.
 - Ustawienia - preferred languages, buffer preset, validation timeout, transcode session limit, public URL and diagnostic toggles.
+- Bezpieczeństwo - change password, view sessions, log out other sessions, log out all sessions.
 
 Panel settings are now wired into runtime behavior:
 
@@ -96,7 +107,7 @@ http://localhost:7000/manifest.json
 http://localhost:7000/stream/movie/tt0133093.json
 ```
 
-After registration/login, admin API examples can be called by the browser panel. Raw `curl` requests to `/admin/*` require the session cookie.
+After registration/login, admin API examples can be called by the browser panel. Raw `curl` requests to protected endpoints require the session cookie.
 
 Run parser examples:
 
@@ -139,4 +150,4 @@ Put Cloudflare/Caddy/Traefik/Nginx in front of the container and set `PUBLIC_BAS
 6. Select best original stream using preferred European audio/subtitle language rules. **Started.**
 7. Add FFmpeg HLS transcoding sessions for `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`. **Started.**
 8. Add admin web UI: addon management, status, search history, validation logs and selected file history. **Started.**
-9. Add first-run registration and admin login. **Started.**
+9. Add first-run registration, admin login and security panel. **Started.**
