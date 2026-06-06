@@ -12,7 +12,9 @@ export type TranscodeProfile = {
 };
 
 const baseProfiles: Record<TranscodeQuality, Omit<TranscodeProfile, "hlsSegmentSeconds" | "hlsListSize">> = {
-  auto: { quality: "auto", label: "Auto", audioBitrateKbps: 160 },
+  // Auto means "best practical realtime profile", not source resolution.
+  // On typical home NAS CPUs 4K/1080p HEVC -> H.264 is often below 1.0x, so start from 720p.
+  auto: { quality: "auto", label: "Auto 720p", width: 1280, height: 720, videoBitrateKbps: 2800, audioBitrateKbps: 128 },
   "4k": { quality: "4k", label: "4K", width: 3840, height: 2160, videoBitrateKbps: 18000, audioBitrateKbps: 192 },
   "1440p": { quality: "1440p", label: "1440p", width: 2560, height: 1440, videoBitrateKbps: 10000, audioBitrateKbps: 192 },
   "1080p": { quality: "1080p", label: "1080p", width: 1920, height: 1080, videoBitrateKbps: 6000, audioBitrateKbps: 160 },
@@ -35,25 +37,25 @@ export function getTranscodeProfile(quality: TranscodeQuality, bufferPreset: Buf
 export function getHlsBufferSettings(bufferPreset: BufferPreset): { segmentSeconds: number; listSize: number } {
   switch (bufferPreset) {
     case "disabled":
-      return { segmentSeconds: 1, listSize: 2 };
+      return { segmentSeconds: 2, listSize: 0 };
     case "auto":
-      return { segmentSeconds: 4, listSize: 6 };
+      return { segmentSeconds: 4, listSize: 0 };
     case "2s":
-      return { segmentSeconds: 1, listSize: 2 };
+      return { segmentSeconds: 1, listSize: 0 };
     case "5s":
-      return { segmentSeconds: 1, listSize: 5 };
+      return { segmentSeconds: 1, listSize: 0 };
     case "10s":
-      return { segmentSeconds: 2, listSize: 5 };
+      return { segmentSeconds: 2, listSize: 0 };
     case "15s":
-      return { segmentSeconds: 3, listSize: 5 };
+      return { segmentSeconds: 3, listSize: 0 };
     case "20s":
-      return { segmentSeconds: 4, listSize: 5 };
+      return { segmentSeconds: 4, listSize: 0 };
     case "30s":
-      return { segmentSeconds: 5, listSize: 6 };
+      return { segmentSeconds: 5, listSize: 0 };
     case "45s":
-      return { segmentSeconds: 5, listSize: 9 };
+      return { segmentSeconds: 5, listSize: 0 };
     case "60s":
-      return { segmentSeconds: 6, listSize: 10 };
+      return { segmentSeconds: 6, listSize: 0 };
   }
 }
 
