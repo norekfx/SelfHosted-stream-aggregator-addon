@@ -1,3 +1,4 @@
+import { getEffectiveTranscodeSettings, TRANSCODE_QUALITY_ORDER } from "../settings/app-settings.js";
 import type { BufferPreset, TranscodeQuality } from "../stremio/manifest.js";
 
 export type TranscodeProfile = {
@@ -9,12 +10,12 @@ export type TranscodeProfile = {
   audioBitrateKbps: number;
   hlsSegmentSeconds: number;
   hlsListSize: number;
+  preset: string;
+  crf: number;
 };
 
-const baseProfiles: Record<TranscodeQuality, Omit<TranscodeProfile, "hlsSegmentSeconds" | "hlsListSize">> = {
-  // Auto means "best practical realtime profile", not source resolution.
-  // On typical home NAS CPUs 4K/1080p HEVC -> H.264 is often below 1.0x, so start from 720p.
-  auto: { quality: "auto", label: "Auto 720p", width: 1280, height: 720, videoBitrateKbps: 2800, audioBitrateKbps: 128 },
+const baseProfiles: Record<TranscodeQuality, Omit<TranscodeProfile, "hlsSegmentSeconds" | "hlsListSize" | "preset" | "crf">> = {
+  auto: { quality: "auto", label: "Auto", audioBitrateKbps: 128 },
   "4k": { quality: "4k", label: "4K", width: 3840, height: 2160, videoBitrateKbps: 18000, audioBitrateKbps: 192 },
   "1440p": { quality: "1440p", label: "1440p", width: 2560, height: 1440, videoBitrateKbps: 10000, audioBitrateKbps: 192 },
   "1080p": { quality: "1080p", label: "1080p", width: 1920, height: 1080, videoBitrateKbps: 6000, audioBitrateKbps: 160 },
@@ -26,12 +27,35 @@ const baseProfiles: Record<TranscodeQuality, Omit<TranscodeProfile, "hlsSegmentS
 };
 
 export function getTranscodeProfile(quality: TranscodeQuality, bufferPreset: BufferPreset): TranscodeProfile {
+  const settings = getEffectiveTranscodeSettings();
   const hls = getHlsBufferSettings(bufferPreset);
+  const resolvedQuality = quality === "auto" ? resolveAutoQuality(settings.autoTranscodeMinQuality, settings.autoTranscodeMaxQuality) : quality;
+  const base = quality === "auto" ? { ...baseProfiles[resolvedQuality], quality: "auto" as const, label: `Auto ${baseProfiles[resolvedQuality].label}` } : baseProfiles[quality];
+  const autoCrf = quality === "auto" ? 24 : 23;
+  const crf = settings.transcodeCrfMode === "range" ? clamp(autoCrf, settings.transcodeCrfMin, settings.transcodeCrfMax) : autoCrf;
+  const videoBitrateKbps = settings.transcodeBitrateMode === "range" && base.videoBitrateKbps
+    ? clamp(base.videoBitrateKbps, settings.transcodeBitrateMinKbps, settings.transcodeBitrateMaxKbps)
+    : base.videoBitrateKbps;
+
   return {
-    ...baseProfiles[quality],
+    ...base,
+    videoBitrateKbps,
+    preset: settings.transcodePreset,
+    crf,
     hlsSegmentSeconds: hls.segmentSeconds,
     hlsListSize: hls.listSize
   };
+}
+
+function resolveAutoQuality(minQuality: string, maxQuality: string): Exclude<TranscodeQuality, "auto"> {
+  const minIndex = TRANSCODE_QUALITY_ORDER.indexOf(minQuality as never);
+  const maxIndex = TRANSCODE_QUALITY_ORDER.indexOf(maxQuality as never);
+  const preferredOrder = ["1080p", "720p", "480p", "360p", "240p", "144p", "1440p", "4k"];
+  const match = preferredOrder.find((quality) => {
+    const index = TRANSCODE_QUALITY_ORDER.indexOf(quality as never);
+    return index >= minIndex && index <= maxIndex;
+  });
+  return (match ?? maxQuality) as Exclude<TranscodeQuality, "auto">;
 }
 
 export function getHlsBufferSettings(bufferPreset: BufferPreset): { segmentSeconds: number; listSize: number } {
@@ -65,4 +89,8 @@ export function isTranscodeQuality(value: string): value is TranscodeQuality {
 
 export function isBufferPreset(value: string): value is BufferPreset {
   return value === "disabled" || value === "auto" || value === "2s" || value === "5s" || value === "10s" || value === "15s" || value === "20s" || value === "30s" || value === "45s" || value === "60s";
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
