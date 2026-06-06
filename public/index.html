@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SelfHosted Stream Aggregator</title>
-    <link rel="stylesheet" href="/app.css?v=20260606-history-check" />
+    <link rel="stylesheet" href="/app.css?v=20260606-clear-tools" />
   </head>
   <body>
     <section id="authScreen" class="auth-screen">
@@ -122,14 +122,23 @@
 
         <section id="cache" class="view">
           <article class="panel">
-            <div class="panel-header"><h2>Zapamiętane wyniki</h2><button class="ghost-btn" id="reloadCacheBtn">Odśwież listę</button></div>
+            <div class="panel-header">
+              <h2>Zapamiętane wyniki</h2>
+              <div class="inline-actions">
+                <button class="ghost-btn" id="reloadCacheBtn">Odśwież listę</button>
+                <button class="danger-btn" onclick="if (confirm('Usunąć cały cache wyszukiwań?')) fetch('/admin/cache', { method: 'DELETE' }).then(() => location.reload())">Wyczyść cache</button>
+              </div>
+            </div>
             <div id="cacheList" class="table-wrap"></div>
           </article>
         </section>
 
         <section id="history" class="view">
           <article class="panel">
-            <div class="panel-header"><h2>Historia wyszukiwań</h2></div>
+            <div class="panel-header">
+              <h2>Historia wyszukiwań</h2>
+              <button class="danger-btn" onclick="if (confirm('Usunąć całą historię wyszukiwań?')) fetch('/admin/history', { method: 'DELETE' }).then(() => location.reload())">Wyczyść historię</button>
+            </div>
             <div id="historyList" class="table-wrap"></div>
           </article>
           <article class="panel">
@@ -234,6 +243,6 @@
         </section>
       </main>
     </div>
-    <script src="/app.js?v=20260606-history-check" type="module"></script>
+    <script src="/app.js?v=20260606-clear-tools" type="module"></script>
   </body>
 </html>
