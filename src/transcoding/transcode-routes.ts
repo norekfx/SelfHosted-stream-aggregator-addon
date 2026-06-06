@@ -83,8 +83,9 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
 }
 
 function resolveBufferPreset(value: string | undefined): BufferPreset {
-  if (isBufferPreset(value ?? "")) {
-    return value;
+  const requested = value ?? "";
+  if (isBufferPreset(requested)) {
+    return requested;
   }
 
   const setting = getEffectiveTranscodeBufferPreset();
