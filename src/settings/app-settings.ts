@@ -44,6 +44,11 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
+    if (row.key === "publicBaseUrl" && row.value.trim() === "") {
+      settings.publicBaseUrl = undefined;
+      continue;
+    }
+
     settings[row.key] = row.value as never;
   }
 
@@ -72,4 +77,20 @@ export function updateAppSettings(input: Partial<AppSettings>): AppSettings {
 
   transaction();
   return getAppSettings();
+}
+
+export function getEffectivePublicBaseUrl(): string | undefined {
+  return getAppSettings().publicBaseUrl ?? env.PUBLIC_BASE_URL;
+}
+
+export function getEffectiveStreamValidationTimeoutMs(): number {
+  return getAppSettings().streamValidationTimeoutMs;
+}
+
+export function getEffectiveMaxTranscodeSessions(): number {
+  return getAppSettings().maxTranscodeSessions;
+}
+
+export function getEffectiveTranscodeBufferPreset(): string {
+  return getAppSettings().defaultTranscodeBufferPreset;
 }
