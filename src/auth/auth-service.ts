@@ -8,6 +8,14 @@ export type AdminUser = {
   lastLoginAt?: string;
 };
 
+export type AdminSessionInfo = {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt?: string;
+  isCurrent: boolean;
+};
+
 type AdminUserRow = {
   id: string;
   username: string;
@@ -119,6 +127,62 @@ export function logoutSession(token: string | undefined): void {
   }
 
   deleteSessionByHash(hashToken(token));
+}
+
+export function listAdminSessions(currentToken: string | undefined): AdminSessionInfo[] {
+  const currentTokenHash = currentToken ? hashToken(currentToken) : undefined;
+  const rows = getDatabase()
+    .prepare("SELECT id, token_hash, created_at, expires_at, last_seen_at FROM admin_sessions WHERE expires_at > ? ORDER BY last_seen_at DESC, created_at DESC")
+    .all(new Date().toISOString()) as Array<{ id: string; token_hash: string; created_at: string; expires_at: string; last_seen_at: string | null }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    lastSeenAt: row.last_seen_at ?? undefined,
+    isCurrent: row.token_hash === currentTokenHash
+  }));
+}
+
+export function changeAdminPassword(currentToken: string | undefined, currentPassword: string, newPassword: string): void {
+  const user = verifySessionToken(currentToken);
+  if (!user) {
+    throw new Error("Authentication required.");
+  }
+
+  const row = getDatabase()
+    .prepare("SELECT * FROM admin_users WHERE id = ?")
+    .get(user.id) as AdminUserRow | undefined;
+
+  if (!row || !verifyPassword(currentPassword, row.password_salt, row.password_hash)) {
+    throw new Error("Current password is invalid.");
+  }
+
+  if (newPassword.length < 10) {
+    throw new Error("New password must have at least 10 characters.");
+  }
+
+  const salt = randomBytes(16).toString("hex");
+  const passwordHash = hashPassword(newPassword, salt);
+  getDatabase().prepare(`
+    UPDATE admin_users
+    SET password_hash = ?, password_salt = ?, updated_at = ?
+    WHERE id = ?
+  `).run(passwordHash, salt, new Date().toISOString(), user.id);
+}
+
+export function logoutOtherSessions(currentToken: string | undefined): void {
+  if (!currentToken) {
+    return;
+  }
+
+  getDatabase()
+    .prepare("DELETE FROM admin_sessions WHERE token_hash != ?")
+    .run(hashToken(currentToken));
+}
+
+export function logoutAllSessions(): void {
+  getDatabase().prepare("DELETE FROM admin_sessions").run();
 }
 
 function createSessionForUser(userId: string): { user: AdminUser; token: string; expiresAt: string } {
