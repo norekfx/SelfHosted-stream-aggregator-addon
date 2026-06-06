@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
+import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 import { getAppSettings, updateAppSettings } from "../settings/app-settings.js";
-import { getCachedSearchResult, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
+import { getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
-import { clearSystemLogs, listSystemLogs, type SystemLogLevel } from "../system/system-log.js";
+import { clearSystemLogs, listSystemLogs, type SystemLogLevel, writeSystemLog } from "../system/system-log.js";
 import { runTechnicalHealthCheck } from "../system/technical-health.js";
 
 const registerAddonSchema = z.object({
@@ -45,6 +46,16 @@ const settingsSchema = z.object({
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get("/admin/settings", async () => ({ settings: getAppSettings() }));
 
+  app.get("/admin/languages", async () => ({
+    languages: EUROPEAN_LANGUAGES.map((language) => ({
+      code: language.code,
+      iso6392: language.iso6392,
+      englishName: language.englishName,
+      nativeName: language.nativeName,
+      label: `${language.nativeName} / ${language.englishName}`
+    }))
+  }));
+
   app.patch("/admin/settings", async (request, reply) => {
     const body = settingsSchema.safeParse(request.body);
     if (!body.success) {
@@ -52,14 +63,20 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return { error: "Invalid settings payload.", details: body.error.flatten() };
     }
 
-    const settings = updateAppSettings({
-      ...body.data,
-      publicBaseUrl: body.data.publicBaseUrl === "" ? undefined : body.data.publicBaseUrl
+    const settings = updateAppSettings(body.data);
+    writeSystemLog("info", "settings", "Admin settings updated.", {
+      changedKeys: Object.keys(body.data)
     });
     return { settings };
   });
 
-  app.get("/admin/system/health", async () => ({ report: await runTechnicalHealthCheck() }));
+  app.get("/admin/system/health", async () => {
+    const report = await runTechnicalHealthCheck();
+    writeSystemLog(report.status === "error" ? "error" : report.status === "warn" ? "warn" : "info", "health", "Technical health-check completed.", {
+      status: report.status
+    });
+    return { report };
+  });
 
   app.get<{ Querystring: { limit?: string; level?: SystemLogLevel } }>("/admin/system/logs", async (request, reply) => {
     const query = logsQuerySchema.safeParse(request.query);
@@ -73,6 +90,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/admin/system/logs", async () => {
     clearSystemLogs();
+    writeSystemLog("info", "logs", "System logs cleared.");
     return { ok: true };
   });
 
@@ -86,6 +104,13 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const addon = await registerAddon(body.data);
+    writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon registered.", {
+      id: addon.id,
+      name: addon.name,
+      manifestUrl: addon.manifestUrl,
+      status: addon.status,
+      lastError: addon.lastError
+    });
     reply.code(201);
     return { addon };
   });
@@ -97,7 +122,18 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return { error: "Invalid aggregation parameters.", details: params.error.flatten() };
     }
 
+    writeSystemLog("info", "diagnostics", "Aggregation diagnostics started.", params.data);
     const result = await aggregateStreams(params.data.type, params.data.id);
+    writeSystemLog(result.selectedOriginal ? "info" : "warn", "diagnostics", "Aggregation diagnostics completed.", {
+      type: result.type,
+      id: result.id,
+      streamCount: result.streamCount,
+      workingStreamCount: result.workingStreamCount,
+      failedStreamCount: result.failedStreamCount,
+      unsupportedStreamCount: result.unsupportedStreamCount,
+      selectedOriginal: result.selectedOriginal?.title
+    });
+
     if (getAppSettings().showDiagnosticDetails) {
       return result;
     }
@@ -137,6 +173,16 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { history: listSearchHistory(query.data.limit) };
   });
 
+  app.get<{ Params: { historyId: string } }>("/admin/history/:historyId", async (request, reply) => {
+    const details = getSearchHistoryDetails(request.params.historyId);
+    if (!details) {
+      reply.code(404);
+      return { error: "History entry not found." };
+    }
+
+    return { details };
+  });
+
   app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/cache/:type/:id", async (request, reply) => {
     const params = aggregateParamsSchema.safeParse(request.params);
     if (!params.success) {
@@ -160,7 +206,12 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return { error: "Invalid refresh parameters.", details: params.error.flatten() };
     }
 
+    writeSystemLog("info", "cache", "Manual cache refresh started.", params.data);
     const selectedOriginal = await refreshNow(params.data.type, params.data.id);
+    writeSystemLog(selectedOriginal ? "info" : "warn", "cache", "Manual cache refresh completed.", {
+      ...params.data,
+      selectedOriginal: selectedOriginal?.title
+    });
     return { selectedOriginal };
   });
 
@@ -187,6 +238,11 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return { error: "Addon not found." };
     }
 
+    writeSystemLog("info", "addons", body.data.enabled ? "Addon enabled." : "Addon disabled.", {
+      id: addon.id,
+      name: addon.name,
+      manifestUrl: addon.manifestUrl
+    });
     return { addon };
   });
 
@@ -197,6 +253,13 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return { error: "Addon not found." };
     }
 
+    writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon health-check completed.", {
+      id: addon.id,
+      name: addon.name,
+      status: addon.status,
+      responseTimeMs: addon.responseTimeMs,
+      lastError: addon.lastError
+    });
     return { addon };
   });
 }
