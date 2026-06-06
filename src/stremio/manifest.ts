@@ -14,6 +14,21 @@ export const TRANSCODE_QUALITIES = [
 
 export type TranscodeQuality = typeof TRANSCODE_QUALITIES[number];
 
+export const BUFFER_PRESETS = [
+  "disabled",
+  "auto",
+  "2s",
+  "5s",
+  "10s",
+  "15s",
+  "20s",
+  "30s",
+  "45s",
+  "60s"
+] as const;
+
+export type BufferPreset = typeof BUFFER_PRESETS[number];
+
 export const addonManifest = {
   id: "community.selfhosted.stream.aggregator",
   version: "0.1.0",
@@ -48,6 +63,24 @@ export const addonManifest = {
         value: language.code,
         label: `${language.nativeName} / ${language.englishName}`
       }))
+    },
+    {
+      key: "transcodeBufferPreset",
+      type: "select",
+      title: "Transcode buffer",
+      default: "auto",
+      options: [
+        { value: "disabled", label: "Wyłączony" },
+        { value: "auto", label: "Automatyczny bufor" },
+        { value: "2s", label: "2 sek" },
+        { value: "5s", label: "5 sek" },
+        { value: "10s", label: "10 sek" },
+        { value: "15s", label: "15 sek" },
+        { value: "20s", label: "20 sek" },
+        { value: "30s", label: "30 sek" },
+        { value: "45s", label: "45 sek" },
+        { value: "60s", label: "60 sek" }
+      ]
     }
   ]
 };
