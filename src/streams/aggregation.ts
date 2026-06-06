@@ -3,7 +3,9 @@ import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
+import type { StreamValidationResult } from "./stream-validation.js";
 import type { StreamType } from "./types.js";
+import { validateStream } from "./validate-stream-url.js";
 
 export type RawAggregatedStream = {
   addonId: string;
@@ -17,6 +19,7 @@ export type RawAggregatedStream = {
   sources?: string[];
   behaviorHints?: Record<string, unknown>;
   metadata: NormalizedStreamMetadata;
+  validation: StreamValidationResult;
 };
 
 export type AggregationResult = {
@@ -27,6 +30,10 @@ export type AggregationResult = {
   successfulAddonCount: number;
   failedAddonCount: number;
   streamCount: number;
+  validatedStreamCount: number;
+  workingStreamCount: number;
+  failedStreamCount: number;
+  unsupportedStreamCount: number;
   addonResults: AddonStreamFetchResult[];
   streams: RawAggregatedStream[];
 };
@@ -37,8 +44,12 @@ export async function aggregateStreams(type: StreamType, id: string): Promise<Ag
     activeAddons.map((addon) => fetchAddonStreams(addon, type, id))
   );
 
-  const streams = addonResults.flatMap((result) =>
-    result.streams.map((stream) => mapExternalStream(result.addon, stream))
+  const rawStreams = addonResults.flatMap((result) =>
+    result.streams.map((stream) => ({ addon: result.addon, stream }))
+  );
+
+  const streams = await Promise.all(
+    rawStreams.map(({ addon, stream }) => mapExternalStream(addon, stream))
   );
 
   return {
@@ -49,6 +60,10 @@ export async function aggregateStreams(type: StreamType, id: string): Promise<Ag
     successfulAddonCount: addonResults.filter((result) => result.status === "fulfilled").length,
     failedAddonCount: addonResults.filter((result) => result.status === "rejected").length,
     streamCount: streams.length,
+    validatedStreamCount: streams.filter((stream) => stream.validation.status !== "pending").length,
+    workingStreamCount: streams.filter((stream) => stream.validation.status === "working").length,
+    failedStreamCount: streams.filter((stream) => stream.validation.status === "failed").length,
+    unsupportedStreamCount: streams.filter((stream) => stream.validation.status === "unsupported").length,
     addonResults,
     streams
   };
@@ -58,7 +73,7 @@ function isStreamAddonEnabled(addon: RegisteredAddon): boolean {
   return addon.enabled && addon.status === "online" && addon.supportedResources.includes("stream");
 }
 
-function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream): RawAggregatedStream {
+async function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream): Promise<RawAggregatedStream> {
   const filename = typeof stream.behaviorHints?.filename === "string" ? stream.behaviorHints.filename : undefined;
 
   return {
@@ -72,6 +87,7 @@ function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream
     fileIdx: stream.fileIdx,
     sources: stream.sources,
     behaviorHints: stream.behaviorHints,
-    metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename })
+    metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename }),
+    validation: await validateStream({ url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash })
   };
 }
