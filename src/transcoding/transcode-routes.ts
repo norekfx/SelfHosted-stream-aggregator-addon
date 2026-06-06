@@ -2,10 +2,10 @@ import { createReadStream, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { env } from "../config/env.js";
+import { getEffectiveTranscodeBufferPreset } from "../settings/app-settings.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
-import { getOrCreateTranscodeSession, getTranscodeSession } from "./transcode-session.js";
+import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession } from "./transcode-session.js";
 
 const playlistParamsSchema = z.object({
   streamId: z.string().min(1),
@@ -26,12 +26,7 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
         return { error: "Invalid transcode request.", details: params.error.flatten() };
       }
 
-      const bufferPreset = isBufferPreset(request.query.buffer ?? "")
-        ? request.query.buffer
-        : isBufferPreset(env.DEFAULT_TRANSCODE_BUFFER_PRESET)
-          ? env.DEFAULT_TRANSCODE_BUFFER_PRESET
-          : "auto";
-
+      const bufferPreset = resolveBufferPreset(request.query.buffer);
       const original = getSelectedOriginal(params.data.streamId);
       if (!original) {
         reply.code(404);
@@ -65,13 +60,8 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
         return { error: "Invalid transcode segment request.", details: params.error.flatten() };
       }
 
-      const bufferPreset = isBufferPreset(request.query.buffer ?? "")
-        ? request.query.buffer
-        : isBufferPreset(env.DEFAULT_TRANSCODE_BUFFER_PRESET)
-          ? env.DEFAULT_TRANSCODE_BUFFER_PRESET
-          : "auto";
-
-      const sessionId = Buffer.from(`${params.data.streamId}|${params.data.quality}|${bufferPreset}`).toString("base64url");
+      const bufferPreset = resolveBufferPreset(request.query.buffer);
+      const sessionId = createTranscodeSessionId(params.data.streamId, params.data.quality, bufferPreset);
       const session = getTranscodeSession(sessionId);
       if (!session) {
         reply.code(404);
@@ -89,4 +79,13 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
       return createReadStream(segmentPath);
     }
   );
+}
+
+function resolveBufferPreset(value: string | undefined) {
+  if (isBufferPreset(value ?? "")) {
+    return value;
+  }
+
+  const setting = getEffectiveTranscodeBufferPreset();
+  return isBufferPreset(setting) ? setting : "auto";
 }
