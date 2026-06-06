@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
@@ -203,5 +204,5 @@ function toDiagnosticAggregatedStream(type: StreamType, id: string, stream: any)
 }
 
 function createStableOriginalId(addonId: string, type: StreamType, id: string, originalUrl: string): string {
-  return Buffer.from(`${addonId}|${type}|${id}|${originalUrl}`).toString("base64url");
+  return createHash("sha256").update(`${addonId}|${type}|${id}|${originalUrl}`).digest("base64url").slice(0, 32);
 }
