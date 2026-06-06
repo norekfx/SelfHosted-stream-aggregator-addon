@@ -48,12 +48,15 @@ export function parseStreamMetadata(input: { name?: string; title?: string; file
   const size = normalized.match(sizePattern)?.[0];
   if (size) matchedTokens.push(size);
 
-  const isMultiLanguage = /\b(multi|multi audio|dual audio|dual-audio|dual|ml|polish\s*\|\s*english|english\s*\|\s*polish)\b/i.test(normalized);
+  const languageHints = extractLanguageHints(rawText);
+  matchedTokens.push(...languageHints.map((language) => `hint:${language}`));
+
+  const isMultiLanguage = /\b(multi|multi audio|dual audio|dual-audio|dual|ml)\b/i.test(normalized) || languageHints.length > 1;
   if (isMultiLanguage) matchedTokens.push("multi");
 
   const audioKind = detectAudioKind(normalized, matchedTokens);
-  const subtitleLanguage = detectSubtitleLanguage(normalized, matchedTokens);
-  const audioLanguage = detectAudioLanguage(normalized, audioKind, subtitleLanguage, isMultiLanguage, matchedTokens);
+  const subtitleLanguage = detectSubtitleLanguage(normalized, languageHints, matchedTokens);
+  const audioLanguage = detectAudioLanguage(normalized, audioKind, subtitleLanguage, isMultiLanguage, languageHints, matchedTokens);
   const releaseGroup = detectReleaseGroup(rawText);
 
   return {
@@ -76,6 +79,9 @@ function normalizeText(value: string): string {
     .replace(/[._\-[\](){}]+/g, " ")
     .replace(/WEB D L/gi, "WEB-DL")
     .replace(/WEB DL/gi, "WEB-DL")
+    .replace(/Dubbing i Napisy PL/gi, "Dubbing PL Napisy PL")
+    .replace(/PLDUB/gi, "Dubbing PL")
+    .replace(/PLSUB/gi, "Napisy PL")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -93,7 +99,7 @@ function firstPatternMatch<T>(value: string, patterns: Array<[RegExp, T]>, match
 }
 
 function detectAudioKind(value: string, matchedTokens: string[]): AudioKind {
-  if (/\b(dubbing\s*pl|pldub|dubbing|dubbed|dub)\b/i.test(value)) {
+  if (/\b(dubbing\s*pl|pldub|dubbing|dubbed|dub)\b|🇵🇱/i.test(value)) {
     matchedTokens.push("dubbing");
     return "dubbing";
   }
@@ -121,7 +127,12 @@ function detectAudioKind(value: string, matchedTokens: string[]): AudioKind {
   return "unknown";
 }
 
-function detectSubtitleLanguage(value: string, matchedTokens: string[]): string | undefined {
+function detectSubtitleLanguage(value: string, languageHints: string[], matchedTokens: string[]): string | undefined {
+  if (/\b(napisy\s*pl|plsub)\b/i.test(value)) {
+    matchedTokens.push("sub:pl");
+    return "pl";
+  }
+
   const subtitleHints = /\b(subbed|subtitles|subs|napisy|plsub)\b/i.test(value);
   if (!subtitleHints) {
     return undefined;
@@ -133,7 +144,7 @@ function detectSubtitleLanguage(value: string, matchedTokens: string[]): string 
     return language.code;
   }
 
-  if (/\bnapisy\b/i.test(value)) {
+  if (languageHints.includes("pl")) {
     matchedTokens.push("sub:pl");
     return "pl";
   }
@@ -146,9 +157,10 @@ function detectAudioLanguage(
   audioKind: AudioKind,
   subtitleLanguage: string | undefined,
   isMultiLanguage: boolean,
+  languageHints: string[],
   matchedTokens: string[]
 ): string | undefined {
-  if (/\b(dubbing\s*pl|pldub|lektor\s*pl|polish|polski|🇵🇱)\b/i.test(value)) {
+  if (/\b(dubbing\s*pl|pldub|lektor\s*pl|polish|polski)\b|🇵🇱/i.test(value) || languageHints.includes("pl")) {
     matchedTokens.push("audio:pl");
     return isMultiLanguage ? "multi" : "pl";
   }
@@ -166,6 +178,21 @@ function detectAudioLanguage(
   return isMultiLanguage ? "multi" : language.code;
 }
 
+function extractLanguageHints(rawText: string): string[] {
+  const hints = new Set<string>();
+  const normalized = normalizeText(rawText);
+
+  if (/\b(polish|polski|dubbing\s*pl|napisy\s*pl|lektor\s*pl)\b|🇵🇱/i.test(normalized)) hints.add("pl");
+  if (/\benglish\b|🇬🇧|🇺🇸/i.test(normalized)) hints.add("en");
+  if (/\bitalian\b|italiano|🇮🇹/i.test(normalized)) hints.add("it");
+  if (/\bgerman\b|deutsch|🇩🇪/i.test(normalized)) hints.add("de");
+  if (/\bfrench\b|français|francais|🇫🇷/i.test(normalized)) hints.add("fr");
+  if (/\brussian\b|русский|🇷🇺/i.test(normalized)) hints.add("ru");
+  if (/\bchinese\b|中文|🇨🇳/i.test(normalized)) hints.add("zh");
+
+  return Array.from(hints);
+}
+
 function detectLanguage(value: string) {
   const candidates = EUROPEAN_LANGUAGES.flatMap((language) => [
     language.code,
@@ -179,7 +206,7 @@ function detectLanguage(value: string) {
 
   return sorted.find(({ alias }) => {
     const escaped = escapeRegExp(alias.toLowerCase());
-    return new RegExp(`\b${escaped}\b`, "i").test(value);
+    return new RegExp(`\\b${escaped}\\b`, "i").test(value);
   })?.language;
 }
 
