@@ -1,5 +1,5 @@
 import { getDatabase } from "../db/database.js";
-import { DEFAULT_PREFERRED_LANGUAGE } from "../languages/european-languages.js";
+import { DEFAULT_PREFERRED_LANGUAGE, EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 import { env } from "../config/env.js";
 
 export type AppSettings = {
@@ -12,6 +12,8 @@ export type AppSettings = {
   autoRefreshCache: boolean;
   showDiagnosticDetails: boolean;
 };
+
+const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language.code));
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
@@ -49,6 +51,12 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
+    if (row.key === "preferredAudioLanguage" || row.key === "preferredSubtitleLanguage") {
+      const value = normalizeLanguageCode(row.value);
+      settings[row.key] = value;
+      continue;
+    }
+
     settings[row.key] = row.value as never;
   }
 
@@ -66,9 +74,13 @@ export function updateAppSettings(input: Partial<AppSettings>): AppSettings {
 
   const transaction = getDatabase().transaction(() => {
     for (const key of allowedKeys) {
-      const value = input[key];
+      let value = input[key];
       if (value === undefined) {
         continue;
+      }
+
+      if (key === "preferredAudioLanguage" || key === "preferredSubtitleLanguage") {
+        value = normalizeLanguageCode(String(value)) as never;
       }
 
       statement.run(key, String(value), now);
@@ -93,4 +105,15 @@ export function getEffectiveMaxTranscodeSessions(): number {
 
 export function getEffectiveTranscodeBufferPreset(): string {
   return getAppSettings().defaultTranscodeBufferPreset;
+}
+
+function normalizeLanguageCode(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return DEFAULT_PREFERRED_LANGUAGE;
+
+  // Early UI versions could accidentally submit Albanian because it was the first option.
+  // Treat that accidental default as Polish unless the user later explicitly changes it in a fixed UI.
+  if (normalized === "sq") return DEFAULT_PREFERRED_LANGUAGE;
+
+  return validLanguageCodes.has(normalized) ? normalized : DEFAULT_PREFERRED_LANGUAGE;
 }
