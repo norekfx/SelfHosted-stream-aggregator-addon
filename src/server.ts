@@ -6,8 +6,9 @@ import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
 import { addonManifest } from "./stremio/manifest.js";
-import { createVisibleStreamOptions } from "./streams/quality-options.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
+import { getSelectedOriginal } from "./streams/original-store.js";
+import { createVisibleStreamOptions } from "./streams/quality-options.js";
 
 runMigrations(getDatabase());
 
@@ -45,14 +46,19 @@ app.get<{
   };
 });
 
-app.get("/proxy/original/:streamId", async (_request, reply) => {
-  reply.code(501);
-  return { error: "Original stream proxy is not implemented yet." };
+app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (request, reply) => {
+  const original = getSelectedOriginal(request.params.streamId);
+  if (!original?.originalUrl) {
+    reply.code(404);
+    return { error: "Selected original stream was not found or has expired." };
+  }
+
+  reply.redirect(original.originalUrl);
 });
 
 app.get("/transcode/:streamId/:quality/master.m3u8", async (_request, reply) => {
   reply.code(501);
-  return { error: "Transcoding is not implemented yet." };
+  return { error: "Transcoding from selected original is not implemented yet." };
 });
 
 await app.listen({ host: env.HOST, port: env.PORT });
