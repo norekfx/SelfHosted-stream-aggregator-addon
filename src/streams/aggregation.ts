@@ -1,7 +1,7 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
-import { env } from "../config/env.js";
+import { getAppSettings, getEffectiveStreamValidationTimeoutMs } from "../settings/app-settings.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
 import { rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
@@ -52,9 +52,10 @@ export async function aggregateStreams(
   id: string,
   preferences: AggregationPreferences = {}
 ): Promise<AggregationResult> {
+  const settings = getAppSettings();
   const rankingPreferences = {
-    preferredAudioLanguage: preferences.preferredAudioLanguage ?? "pl",
-    preferredSubtitleLanguage: preferences.preferredSubtitleLanguage ?? "pl"
+    preferredAudioLanguage: preferences.preferredAudioLanguage ?? settings.preferredAudioLanguage,
+    preferredSubtitleLanguage: preferences.preferredSubtitleLanguage ?? settings.preferredSubtitleLanguage
   };
 
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
@@ -113,7 +114,7 @@ async function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremio
     metadata: parseStreamMetadata({ name: stream.name, title: stream.title, filename }),
     validation: await validateStream(
       { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
-      env.STREAM_VALIDATION_TIMEOUT_MS
+      getEffectiveStreamValidationTimeoutMs()
     )
   };
 }
