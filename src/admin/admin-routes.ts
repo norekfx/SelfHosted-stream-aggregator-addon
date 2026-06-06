@@ -73,7 +73,24 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return { error: "Invalid aggregation parameters.", details: params.error.flatten() };
     }
 
-    return aggregateStreams(params.data.type, params.data.id);
+    const result = await aggregateStreams(params.data.type, params.data.id);
+    if (getAppSettings().showDiagnosticDetails) {
+      return result;
+    }
+
+    return {
+      type: result.type,
+      id: result.id,
+      searchedAt: result.searchedAt,
+      addonCount: result.addonCount,
+      successfulAddonCount: result.successfulAddonCount,
+      failedAddonCount: result.failedAddonCount,
+      streamCount: result.streamCount,
+      workingStreamCount: result.workingStreamCount,
+      failedStreamCount: result.failedStreamCount,
+      unsupportedStreamCount: result.unsupportedStreamCount,
+      selectedOriginal: result.selectedOriginal
+    };
   });
 
   app.get<{ Querystring: { limit?: string } }>("/admin/cache", async (request, reply) => {
