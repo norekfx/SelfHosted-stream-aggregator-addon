@@ -1,0 +1,16 @@
+services:
+  aggregator-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: selfhosted-stream-aggregator-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "7000:7000"
+    volumes:
+      - aggregator-cache:/data/cache
+
+volumes:
+  aggregator-cache:
