@@ -13,21 +13,26 @@ The repository now contains the first working TypeScript/Fastify scaffold:
 - `POST /admin/addons` - register an external addon by manifest URL.
 - `POST /admin/addons/:addonId/check` - manually refresh addon health.
 - `GET /admin/aggregate/:type/:id` - diagnostic aggregation endpoint with normalized metadata, validation results, ranked streams and selected original.
+- `GET /admin/cache` - list cached media selections.
+- `GET /admin/cache/:type/:id` - inspect cached result for one movie/series item.
+- `POST /admin/cache/:type/:id/refresh` - force a cache refresh.
+- `GET /admin/history` - list persisted search history.
 - `GET /proxy/original/:streamId` - redirects the `Original` option to the selected original file.
 - `GET /transcode/:streamId/:quality/master.m3u8` - starts or returns an FFmpeg HLS transcode playlist from the selected original.
 - `GET /transcode/:streamId/:quality/:segment` - returns generated HLS `.ts` segments.
-- SQLite persistence for registered addons at `/data/db/aggregator.sqlite` by default.
+- SQLite persistence for addons, search cache, selected originals and search history at `/data/db/aggregator.sqlite` by default.
 - European language registry with Polish as the default preferred audio/subtitle language.
 - Stream metadata parser for quality, release source, codec, size, audio kind, audio language and subtitle language.
 - HTTP stream validator using `HEAD`, fallback `Range` GET, timeout, HTTP status, content type, content length and range support.
 - Ranking that selects exactly one working original source.
+- Stale-while-refresh cache: repeated playback can return the last working result immediately while the server refreshes addon results in the background.
 - Buffer presets: disabled, auto, 2s, 5s, 10s, 15s, 20s, 30s, 45s, 60s.
 - FFmpeg/HLS transcode session manager for `Auto`, `4K`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`, `144p`.
 - Docker and Docker Compose files for TrueNAS Scale-style self-hosting.
 
 Important playback rule: `Original` is the original selected file. All quality options such as `Auto`, `4K`, `1080p` and `720p` are server-side transcodes generated from that same selected original, not separate streams from different addons.
 
-The stream endpoint runs aggregation, validation and ranking. It exposes options only when one working original has been selected. Transcoding starts on demand when Stremio requests a transcode playlist.
+The stream endpoint uses the stored working result immediately when available, then refreshes the search in the background. If there is no cache yet, it performs a full aggregation, validation and ranking before returning options.
 
 ## Development
 
@@ -62,6 +67,15 @@ Run diagnostic aggregation:
 
 ```bash
 curl http://localhost:7000/admin/aggregate/movie/tt0133093
+```
+
+Inspect cache and history:
+
+```bash
+curl http://localhost:7000/admin/cache
+curl http://localhost:7000/admin/cache/movie/tt0133093
+curl -X POST http://localhost:7000/admin/cache/movie/tt0133093/refresh
+curl http://localhost:7000/admin/history
 ```
 
 Run parser examples:
