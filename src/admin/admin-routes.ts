@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
+import { getAppSettings, updateAppSettings } from "../settings/app-settings.js";
 import { getCachedSearchResult, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
@@ -23,7 +24,34 @@ const limitQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).default(50)
 });
 
+const settingsSchema = z.object({
+  preferredAudioLanguage: z.string().min(2).optional(),
+  preferredSubtitleLanguage: z.string().min(2).optional(),
+  defaultTranscodeBufferPreset: z.string().optional(),
+  streamValidationTimeoutMs: z.coerce.number().int().positive().max(120000).optional(),
+  maxTranscodeSessions: z.coerce.number().int().positive().max(16).optional(),
+  publicBaseUrl: z.string().url().optional().or(z.literal("")),
+  autoRefreshCache: z.boolean().optional(),
+  showDiagnosticDetails: z.boolean().optional()
+});
+
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/admin/settings", async () => ({ settings: getAppSettings() }));
+
+  app.patch("/admin/settings", async (request, reply) => {
+    const body = settingsSchema.safeParse(request.body);
+    if (!body.success) {
+      reply.code(400);
+      return { error: "Invalid settings payload.", details: body.error.flatten() };
+    }
+
+    const settings = updateAppSettings({
+      ...body.data,
+      publicBaseUrl: body.data.publicBaseUrl === "" ? undefined : body.data.publicBaseUrl
+    });
+    return { settings };
+  });
+
   app.get("/admin/addons", async () => ({ addons: listAddons() }));
 
   app.post("/admin/addons", async (request, reply) => {
