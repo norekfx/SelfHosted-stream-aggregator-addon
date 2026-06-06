@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { env, getTranscodeCacheDir } from "../config/env.js";
+import { getEffectiveMaxTranscodeSessions } from "../settings/app-settings.js";
 import type { BufferPreset, TranscodeQuality } from "../stremio/manifest.js";
 import type { AggregatedStream } from "../streams/types.js";
 import { getTranscodeProfile, type TranscodeProfile } from "./transcode-profiles.js";
@@ -159,7 +160,7 @@ function buildFfmpegArgs(session: TranscodeSession): string[] {
 
 function enforceSessionLimit(): void {
   const runningSessions = Array.from(sessions.values()).filter((session) => session.status === "running" || session.status === "starting");
-  if (runningSessions.length < env.MAX_TRANSCODE_SESSIONS) {
+  if (runningSessions.length < getEffectiveMaxTranscodeSessions()) {
     return;
   }
 
@@ -169,6 +170,10 @@ function enforceSessionLimit(): void {
     oldest.status = "exited";
     oldest.updatedAt = new Date().toISOString();
   }
+}
+
+export function createTranscodeSessionId(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset): string {
+  return createSessionId(streamId, quality, bufferPreset);
 }
 
 function createSessionId(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset): string {
