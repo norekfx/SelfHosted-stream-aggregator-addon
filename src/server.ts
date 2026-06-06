@@ -1,5 +1,8 @@
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { registerAdminRoutes } from "./admin/admin-routes.js";
 import { env } from "./config/env.js";
@@ -11,6 +14,9 @@ import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
 import { registerTranscodeRoutes } from "./transcoding/transcode-routes.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const publicDir = join(__dirname, "../public");
+
 runMigrations(getDatabase());
 
 const app = Fastify({
@@ -20,6 +26,7 @@ const app = Fastify({
 });
 
 await app.register(cors, { origin: true });
+await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAdminRoutes);
 await app.register(registerTranscodeRoutes);
 
