@@ -1,10 +1,25 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { createFirstAdmin, hasAdminUser, loginAdmin, logoutSession, verifySessionToken } from "./auth-service.js";
+import {
+  changeAdminPassword,
+  createFirstAdmin,
+  hasAdminUser,
+  listAdminSessions,
+  loginAdmin,
+  logoutAllSessions,
+  logoutOtherSessions,
+  logoutSession,
+  verifySessionToken
+} from "./auth-service.js";
 
 const authSchema = z.object({
   username: z.string().min(3),
   password: z.string().min(10)
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(10)
 });
 
 const cookieName = "ssa_admin_session";
@@ -58,6 +73,37 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     clearSessionCookie(reply);
     return { ok: true };
   });
+
+  app.get("/auth/sessions", { preHandler: requireAdminAuth }, async (request) => ({
+    sessions: listAdminSessions(readSessionCookie(request))
+  }));
+
+  app.post("/auth/change-password", { preHandler: requireAdminAuth }, async (request, reply) => {
+    const body = changePasswordSchema.safeParse(request.body);
+    if (!body.success) {
+      reply.code(400);
+      return { error: "Invalid password change payload.", details: body.error.flatten() };
+    }
+
+    try {
+      changeAdminPassword(readSessionCookie(request), body.data.currentPassword, body.data.newPassword);
+      return { ok: true };
+    } catch (error) {
+      reply.code(400);
+      return { error: error instanceof Error ? error.message : "Password change failed." };
+    }
+  });
+
+  app.post("/auth/logout-other-sessions", { preHandler: requireAdminAuth }, async (request) => {
+    logoutOtherSessions(readSessionCookie(request));
+    return { ok: true };
+  });
+
+  app.post("/auth/logout-all-sessions", { preHandler: requireAdminAuth }, async (_request, reply) => {
+    logoutAllSessions();
+    clearSessionCookie(reply);
+    return { ok: true };
+  });
 }
 
 export function requireAdminAuth(request: FastifyRequest, reply: FastifyReply, done: (error?: Error) => void): void {
@@ -70,7 +116,7 @@ export function requireAdminAuth(request: FastifyRequest, reply: FastifyReply, d
   done();
 }
 
-function readSessionCookie(request: FastifyRequest): string | undefined {
+export function readSessionCookie(request: FastifyRequest): string | undefined {
   const cookieHeader = request.headers.cookie;
   if (!cookieHeader) {
     return undefined;
