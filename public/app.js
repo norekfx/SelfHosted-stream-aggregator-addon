@@ -13,6 +13,7 @@ const state = {
 
 const titles = {
   dashboard: ['Dashboard', 'Szybki podgląd działania agregatora.'],
+  install: ['Instalacja', 'Gotowe linki i checklisty dla Stremio/Nuvio.'],
   addons: ['Addony', 'Dodawanie, status i włączanie zewnętrznych addonów.'],
   cache: ['Cache', 'Zapamiętane działające wyniki dla szybkiego ponownego odtwarzania.'],
   history: ['Historia', 'Pełna historia sprawdzania i wyboru plików.'],
@@ -83,6 +84,8 @@ function bindNavigation() {
   $('#reloadLogsBtn').addEventListener('click', loadSystemLogs);
   $('#clearLogsBtn').addEventListener('click', clearSystemLogs);
   $('#logLevelFilter').addEventListener('change', loadSystemLogs);
+  $('#copyManifestBtn').addEventListener('click', () => copyText(getManifestUrl(), 'Skopiowano URL manifestu.'));
+  $('#copyTestStreamBtn').addEventListener('click', () => copyText(getTestStreamUrl(), 'Skopiowano testowy URL streamów.'));
   $('#logoutBtn').addEventListener('click', logout);
   $('#logoutOtherSessionsBtn').addEventListener('click', logoutOtherSessions);
   $('#logoutAllSessionsBtn').addEventListener('click', logoutAllSessions);
@@ -136,6 +139,7 @@ function bindForms() {
     const result = await api('/admin/settings', { method: 'PATCH', body });
     state.settings = result.settings;
     renderSettings();
+    renderInstall();
     toast('Ustawienia zapisane.');
   });
 
@@ -185,10 +189,12 @@ function resetPrivateState() {
 async function loadAll() {
   await Promise.allSettled([checkHealth(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]);
   renderDashboard();
+  renderInstall();
 }
 
 async function refreshCurrentView() {
   if (state.view === 'dashboard') await loadAll();
+  if (state.view === 'install') renderInstall();
   if (state.view === 'addons') await loadAddons();
   if (state.view === 'cache') await loadCache();
   if (state.view === 'history') await loadHistory();
@@ -213,6 +219,7 @@ async function loadSettings() {
   state.settings = data.settings;
   renderSettings();
   renderSettingsSummary();
+  renderInstall();
 }
 
 async function loadAddons() {
@@ -220,6 +227,7 @@ async function loadAddons() {
   state.addons = data.addons ?? [];
   renderAddons();
   renderDashboard();
+  renderInstall();
 }
 
 async function loadCache() {
@@ -246,6 +254,7 @@ async function loadTechnicalHealth() {
   const data = await api('/admin/system/health');
   state.healthReport = data.report;
   renderTechnicalHealth();
+  renderInstall();
 }
 
 async function loadSystemLogs() {
@@ -287,6 +296,34 @@ function renderSettingsSummary() {
     ['Sesje transkodowania', s.maxTranscodeSessions],
     ['Publiczny URL', s.publicBaseUrl || 'nie ustawiono']
   ].map(([key, value]) => `<div class="kv"><span>${key}</span><strong>${escapeHtml(String(value ?? '-'))}</strong></div>`).join('');
+}
+
+function renderInstall() {
+  const manifestUrl = getManifestUrl();
+  const testStreamUrl = getTestStreamUrl();
+  $('#manifestInstallUrl').textContent = manifestUrl;
+  $('#testStreamUrl').textContent = testStreamUrl;
+
+  const baseUrl = getInstallBaseUrl();
+  const healthStatus = state.healthReport?.status ?? 'warn';
+  const hasHttps = baseUrl.startsWith('https://');
+  const hasAddons = state.addons.length > 0;
+  const hasOnlineAddon = state.addons.some((addon) => addon.status === 'online');
+
+  const checks = [
+    ['Publiczny URL', hasHttps ? 'ok' : 'warn', hasHttps ? 'Skonfigurowano HTTPS.' : 'Dla zdalnego Stremio/Nuvio ustaw HTTPS w Publicznym URL.'],
+    ['Manifest', 'ok', 'Endpoint manifestu pozostaje publiczny.'],
+    ['Playback bez logowania', 'ok', 'Stream/proxy/transcode endpointy są publiczne dla klientów.'],
+    ['Addony', hasAddons ? (hasOnlineAddon ? 'ok' : 'warn') : 'warn', hasAddons ? (hasOnlineAddon ? 'Masz co najmniej jeden addon online.' : 'Addony są dodane, ale żaden nie jest online.') : 'Dodaj co najmniej jeden zewnętrzny addon.'],
+    ['Health-check', healthStatus, state.healthReport ? `Ostatni status: ${healthStatus}.` : 'Uruchom test w zakładce System.']
+  ];
+
+  $('#installChecklist').innerHTML = checks.map(([label, status, message]) => `
+    <div class="check-item">
+      <div><strong>${escapeHtml(label)}</strong><br><span>${escapeHtml(message)}</span></div>
+      ${badge(status)}
+    </div>
+  `).join('');
 }
 
 function renderAddons() {
@@ -436,6 +473,27 @@ async function api(path, options = {}) {
     throw new Error(data.error ?? `HTTP ${response.status}`);
   }
   return data;
+}
+
+function getInstallBaseUrl() {
+  return (state.settings?.publicBaseUrl || window.location.origin).replace(/\/$/, '');
+}
+
+function getManifestUrl() {
+  return `${getInstallBaseUrl()}/manifest.json`;
+}
+
+function getTestStreamUrl() {
+  return `${getInstallBaseUrl()}/stream/movie/tt0133093.json`;
+}
+
+async function copyText(value, message) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast(message);
+  } catch {
+    toast(value);
+  }
 }
 
 function formatStats(stats = {}) {
