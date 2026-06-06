@@ -28,9 +28,19 @@ const settingsSchema = z.object({
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get("/admin/settings", async () => ({ settings: getAppSettings() }));
 
-  app.get("/admin/languages", async () => ({
-    languages: EUROPEAN_LANGUAGES.map((language) => ({ code: language.code, iso6392: language.iso6392, englishName: language.englishName, nativeName: language.nativeName, label: `${language.nativeName} / ${language.englishName}` }))
-  }));
+  app.get("/admin/languages", async () => {
+    const languages = [...EUROPEAN_LANGUAGES].sort((a, b) => {
+      if (a.code === "pl") return -1;
+      if (b.code === "pl") return 1;
+      if (a.code === "en") return -1;
+      if (b.code === "en") return 1;
+      return a.nativeName.localeCompare(b.nativeName);
+    });
+
+    return {
+      languages: languages.map((language) => ({ code: language.code, iso6392: language.iso6392, englishName: language.englishName, nativeName: language.nativeName, label: `${language.nativeName} / ${language.englishName}` }))
+    };
+  });
 
   app.patch("/admin/settings", async (request, reply) => {
     const body = settingsSchema.safeParse(request.body);
