@@ -3,6 +3,7 @@ import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
 import { env } from "../config/env.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
+import { rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
 import type { StreamValidationResult } from "./stream-validation.js";
 import type { StreamType } from "./types.js";
@@ -23,6 +24,11 @@ export type RawAggregatedStream = {
   validation: StreamValidationResult;
 };
 
+export type AggregationPreferences = {
+  preferredAudioLanguage?: string;
+  preferredSubtitleLanguage?: string;
+};
+
 export type AggregationResult = {
   type: StreamType;
   id: string;
@@ -37,9 +43,20 @@ export type AggregationResult = {
   unsupportedStreamCount: number;
   addonResults: AddonStreamFetchResult[];
   streams: RawAggregatedStream[];
+  rankedStreams: RankedStream[];
+  selectedOriginal: RankedStream | null;
 };
 
-export async function aggregateStreams(type: StreamType, id: string): Promise<AggregationResult> {
+export async function aggregateStreams(
+  type: StreamType,
+  id: string,
+  preferences: AggregationPreferences = {}
+): Promise<AggregationResult> {
+  const rankingPreferences = {
+    preferredAudioLanguage: preferences.preferredAudioLanguage ?? "pl",
+    preferredSubtitleLanguage: preferences.preferredSubtitleLanguage ?? "pl"
+  };
+
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
   const addonResults = await Promise.all(
     activeAddons.map((addon) => fetchAddonStreams(addon, type, id))
@@ -52,6 +69,9 @@ export async function aggregateStreams(type: StreamType, id: string): Promise<Ag
   const streams = await Promise.all(
     rawStreams.map(({ addon, stream }) => mapExternalStream(addon, stream))
   );
+
+  const rankedStreams = rankWorkingStreams(streams, rankingPreferences);
+  const selectedOriginal = selectBestOriginalStream(streams, rankingPreferences);
 
   return {
     type,
@@ -66,7 +86,9 @@ export async function aggregateStreams(type: StreamType, id: string): Promise<Ag
     failedStreamCount: streams.filter((stream) => stream.validation.status === "failed").length,
     unsupportedStreamCount: streams.filter((stream) => stream.validation.status === "unsupported").length,
     addonResults,
-    streams
+    streams,
+    rankedStreams,
+    selectedOriginal
   };
 }
 
