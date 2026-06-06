@@ -1,4 +1,5 @@
 import { aggregateStreams } from "./aggregation.js";
+import { saveSelectedOriginal } from "./original-store.js";
 import type { AggregatedStream, StreamType } from "./types.js";
 
 /**
@@ -19,7 +20,7 @@ export async function findBestValidatedStream(type: StreamType, id: string): Pro
     return null;
   }
 
-  return {
+  const original: AggregatedStream = {
     id: createStableOriginalId(selectedOriginal.addonId, type, id, originalUrl),
     name: "Original",
     title: selectedOriginal.title ?? selectedOriginal.name ?? "Selected original stream",
@@ -32,6 +33,9 @@ export async function findBestValidatedStream(type: StreamType, id: string): Pro
     validationStatus: "working",
     validationReason: selectedOriginal.scoreReasons.join("; ")
   };
+
+  saveSelectedOriginal(original);
+  return original;
 }
 
 function createStableOriginalId(addonId: string, type: StreamType, id: string, originalUrl: string): string {
