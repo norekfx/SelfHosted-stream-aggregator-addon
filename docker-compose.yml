@@ -10,7 +10,7 @@ services:
     ports:
       - "7000:7000"
     volumes:
-      - aggregator-cache:/data/cache
+      - aggregator-data:/data
 
 volumes:
-  aggregator-cache:
+  aggregator-data:
