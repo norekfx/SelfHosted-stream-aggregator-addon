@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import { getAppSettings, getEffectivePublicBaseUrl, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
+import { getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
@@ -23,6 +23,7 @@ const settingsSchema = z.object({
   preferredSubtitleLanguage: z.string().min(2).optional(),
   defaultTranscodeBufferPreset: z.string().optional(),
   streamValidationTimeoutMs: z.coerce.number().int().positive().max(120000).optional(),
+  linkValidationMode: z.enum(LINK_VALIDATION_MODES).optional(),
   maxTranscodeSessions: z.coerce.number().int().positive().max(16).optional(),
   publicBaseUrl: z.string().url().optional().or(z.literal("")),
   autoRefreshCache: z.boolean().optional(),
