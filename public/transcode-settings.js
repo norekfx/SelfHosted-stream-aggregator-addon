@@ -10,6 +10,7 @@ const TRANSCODE_SETTING_FIELDS = [
   "transcodeBitrateMaxKbps"
 ];
 
+const LOG_LEVEL_STORAGE_KEY = "selfhosted-stream-aggregator:log-level-filter";
 const originalFetch = window.fetch.bind(window);
 
 window.fetch = async (input, init = {}) => {
@@ -57,6 +58,19 @@ function fillTranscodeSettings(settings) {
     if (!element) continue;
     element.value = settings[field] ?? defaults[field];
   }
+}
+
+function installLogLevelMemory() {
+  const select = document.getElementById("logLevelFilter");
+  if (!select || select.dataset.logLevelMemory === "1") return;
+
+  const saved = localStorage.getItem(LOG_LEVEL_STORAGE_KEY);
+  const initialValue = saved === null ? "error" : saved;
+  select.value = [...select.options].some((option) => option.value === initialValue) ? initialValue : "error";
+  select.dataset.logLevelMemory = "1";
+  select.addEventListener("change", () => {
+    localStorage.setItem(LOG_LEVEL_STORAGE_KEY, select.value);
+  });
 }
 
 function installDiagnosticVodUi() {
@@ -140,6 +154,8 @@ function showVodToast(message) {
   setTimeout(() => el.classList.add("hidden"), 3200);
 }
 
+installLogLevelMemory();
+
 setInterval(() => {
   const form = document.getElementById("settingsForm");
   if (form && form.dataset.transcodeSettingsPatch !== "1") {
@@ -150,5 +166,6 @@ setInterval(() => {
       .catch(() => {});
   }
 
+  installLogLevelMemory();
   installDiagnosticVodUi();
 }, 1000);
