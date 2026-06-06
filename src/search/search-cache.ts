@@ -95,12 +95,22 @@ export function listCachedSearchResults(limit = 50): CachedSearchResult[] {
   return rows.map(mapCacheRow);
 }
 
+export function clearSearchCache(): number {
+  const result = getDatabase().prepare("DELETE FROM search_cache").run();
+  return result.changes;
+}
+
 export function listSearchHistory(limit = 50): SearchHistoryEntry[] {
   const rows = getDatabase()
     .prepare("SELECT * FROM search_history ORDER BY searched_at DESC LIMIT ?")
     .all(limit) as SearchHistoryRow[];
 
   return rows.map(mapHistoryRow);
+}
+
+export function clearSearchHistory(): number {
+  const result = getDatabase().prepare("DELETE FROM search_history").run();
+  return result.changes;
 }
 
 export function getSearchHistoryDetails(historyId: string): SearchHistoryDetails | undefined {
