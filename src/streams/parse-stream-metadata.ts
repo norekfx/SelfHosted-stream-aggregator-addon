@@ -16,11 +16,12 @@ const qualityPatterns: Array<[RegExp, NormalizedQuality]> = [
 
 const sourcePatterns: Array<[RegExp, ReleaseSource]> = [
   [/\b(blu[- .]?ray|bdrip|brrip|bdremux|remux)\b/i, "BluRay"],
-  [/\b(web[- .]?dl|webdl)\b/i, "WEB-DL"],
+  [/\b(web[- .]?d[ l]|web[- .]?dl|webdl)\b/i, "WEB-DL"],
   [/\b(web[- .]?rip|webrip)\b/i, "WEBRip"],
   [/\bhdrip\b/i, "HDRip"],
   [/\bdvdrip\b/i, "DVDRip"],
   [/\bhdtv\b/i, "HDTV"],
+  [/\b(telesync|telecine|camrip)\b/i, "TS"],
   [/\bcam\b/i, "CAM"],
   [/\bts\b/i, "TS"],
   [/\btc\b/i, "TC"]
@@ -36,18 +37,18 @@ const codecPatterns: Array<[RegExp, VideoCodec]> = [
 
 const sizePattern = /\b\d+(?:[.,]\d+)?\s*(?:gb|gib|mb|mib)\b/i;
 
-export function parseStreamMetadata(input: { name?: string; title?: string; filename?: string }): NormalizedStreamMetadata {
-  const rawText = [input.name, input.title, input.filename].filter(Boolean).join(" ");
+export function parseStreamMetadata(input: { name?: string; title?: string; filename?: string; description?: string }): NormalizedStreamMetadata {
+  const rawText = [input.name, input.title, input.filename, input.description].filter(Boolean).join(" ");
   const normalized = normalizeText(rawText);
   const matchedTokens: string[] = [];
 
-  const quality = firstPatternMatch(normalized, qualityPatterns, matchedTokens) ?? "unknown";
+  const quality = firstPatternMatch(normalized, qualityPatterns, matchedTokens) ?? inferQualityFromSize(normalized, matchedTokens) ?? "unknown";
   const source = firstPatternMatch(normalized, sourcePatterns, matchedTokens) ?? "unknown";
   const videoCodec = firstPatternMatch(normalized, codecPatterns, matchedTokens) ?? "unknown";
   const size = normalized.match(sizePattern)?.[0];
   if (size) matchedTokens.push(size);
 
-  const isMultiLanguage = /\b(multi|multi audio|dual audio|dual-audio|ml)\b/i.test(normalized);
+  const isMultiLanguage = /\b(multi|multi audio|dual audio|dual-audio|dual|ml|polish\s*\|\s*english|english\s*\|\s*polish)\b/i.test(normalized);
   if (isMultiLanguage) matchedTokens.push("multi");
 
   const audioKind = detectAudioKind(normalized, matchedTokens);
@@ -73,6 +74,8 @@ export function parseStreamMetadata(input: { name?: string; title?: string; file
 function normalizeText(value: string): string {
   return value
     .replace(/[._\-[\](){}]+/g, " ")
+    .replace(/WEB D L/gi, "WEB-DL")
+    .replace(/WEB DL/gi, "WEB-DL")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -90,14 +93,14 @@ function firstPatternMatch<T>(value: string, patterns: Array<[RegExp, T]>, match
 }
 
 function detectAudioKind(value: string, matchedTokens: string[]): AudioKind {
+  if (/\b(dubbing\s*pl|pldub|dubbing|dubbed|dub)\b/i.test(value)) {
+    matchedTokens.push("dubbing");
+    return "dubbing";
+  }
+
   if (/\b(lektor|lector|ivo|voice over|voiceover)\b/i.test(value)) {
     matchedTokens.push("lektor");
     return "lektor";
-  }
-
-  if (/\b(dubbing|dubbed|dub|dubbing pl|pldub)\b/i.test(value)) {
-    matchedTokens.push("dubbing");
-    return "dubbing";
   }
 
   if (/\b(subbed|napisy|subtitles|subs|plsub)\b/i.test(value)) {
@@ -105,7 +108,7 @@ function detectAudioKind(value: string, matchedTokens: string[]): AudioKind {
     return "subbed";
   }
 
-  if (/\b(multi|multi audio|dual audio|dual-audio|ml)\b/i.test(value)) {
+  if (/\b(multi|multi audio|dual audio|dual-audio|dual|ml)\b/i.test(value)) {
     matchedTokens.push("multi");
     return "multi";
   }
@@ -145,6 +148,11 @@ function detectAudioLanguage(
   isMultiLanguage: boolean,
   matchedTokens: string[]
 ): string | undefined {
+  if (/\b(dubbing\s*pl|pldub|lektor\s*pl|polish|polski|🇵🇱)\b/i.test(value)) {
+    matchedTokens.push("audio:pl");
+    return isMultiLanguage ? "multi" : "pl";
+  }
+
   const language = detectLanguage(value);
   if (!language) {
     return isMultiLanguage ? "multi" : undefined;
@@ -171,12 +179,40 @@ function detectLanguage(value: string) {
 
   return sorted.find(({ alias }) => {
     const escaped = escapeRegExp(alias.toLowerCase());
-    return new RegExp(`\\b${escaped}\\b`, "i").test(value);
+    return new RegExp(`\b${escaped}\b`, "i").test(value);
   })?.language;
 }
 
 function hasExplicitAudioHint(value: string): boolean {
-  return /\b(audio|lektor|lector|dubbing|dubbed|dub|multi audio|dual audio)\b/i.test(value);
+  return /\b(audio|lektor|lector|dubbing|dubbed|dub|multi audio|dual audio|dual)\b/i.test(value);
+}
+
+function inferQualityFromSize(value: string, matchedTokens: string[]): NormalizedQuality | undefined {
+  const size = value.match(sizePattern)?.[0];
+  if (!size) return undefined;
+  const number = Number.parseFloat(size.replace(",", "."));
+  const isMb = /mb|mib/i.test(size);
+  const gb = isMb ? number / 1024 : number;
+  if (!Number.isFinite(gb)) return undefined;
+
+  if (gb >= 12) {
+    matchedTokens.push("quality inferred from large size");
+    return "2160p";
+  }
+  if (gb >= 4) {
+    matchedTokens.push("quality inferred from size");
+    return "1080p";
+  }
+  if (gb >= 1.2) {
+    matchedTokens.push("quality inferred from size");
+    return "720p";
+  }
+  if (gb >= 0.55) {
+    matchedTokens.push("quality inferred from size");
+    return "480p";
+  }
+
+  return undefined;
 }
 
 function detectReleaseGroup(rawText: string): string | undefined {
