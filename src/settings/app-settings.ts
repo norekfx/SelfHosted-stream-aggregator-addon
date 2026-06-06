@@ -2,11 +2,14 @@ import { getDatabase } from "../db/database.js";
 import { DEFAULT_PREFERRED_LANGUAGE, EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 import { env } from "../config/env.js";
 
+export type LinkValidationMode = "best" | "all" | "5" | "10" | "20" | "40" | "80" | "100" | "150" | "200";
+
 export type AppSettings = {
   preferredAudioLanguage: string;
   preferredSubtitleLanguage: string;
   defaultTranscodeBufferPreset: string;
   streamValidationTimeoutMs: number;
+  linkValidationMode: LinkValidationMode;
   maxTranscodeSessions: number;
   publicBaseUrl?: string;
   autoRefreshCache: boolean;
@@ -25,12 +28,14 @@ export type AppSettings = {
 const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language.code));
 export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "4k"] as const;
 export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
+export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80", "100", "150", "200"] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferredSubtitleLanguage: DEFAULT_PREFERRED_LANGUAGE,
   defaultTranscodeBufferPreset: env.DEFAULT_TRANSCODE_BUFFER_PRESET,
   streamValidationTimeoutMs: env.STREAM_VALIDATION_TIMEOUT_MS,
+  linkValidationMode: "best",
   maxTranscodeSessions: env.MAX_TRANSCODE_SESSIONS,
   publicBaseUrl: env.PUBLIC_BASE_URL,
   autoRefreshCache: true,
@@ -120,6 +125,10 @@ export function getEffectiveStreamValidationTimeoutMs(): number {
   return getAppSettings().streamValidationTimeoutMs;
 }
 
+export function getEffectiveLinkValidationMode(): LinkValidationMode {
+  return getAppSettings().linkValidationMode;
+}
+
 export function getEffectiveMaxTranscodeSessions(): number {
   return getAppSettings().maxTranscodeSessions;
 }
@@ -143,6 +152,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   const normalized = { ...settings };
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMinQuality as never)) normalized.autoTranscodeMinQuality = defaults.autoTranscodeMinQuality;
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMaxQuality as never)) normalized.autoTranscodeMaxQuality = defaults.autoTranscodeMaxQuality;
+  if (!LINK_VALIDATION_MODES.includes(normalized.linkValidationMode as never)) normalized.linkValidationMode = defaults.linkValidationMode;
 
   const minIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMinQuality as never);
   const maxIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMaxQuality as never);
