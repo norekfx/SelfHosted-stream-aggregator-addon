@@ -1,3 +1,4 @@
+import { listEnabledLibraries } from "../libraries/library-registry.js";
 import { DEFAULT_PREFERRED_LANGUAGE, EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 
 export const TRANSCODE_QUALITIES = [
@@ -29,14 +30,13 @@ export const BUFFER_PRESETS = [
 
 export type BufferPreset = typeof BUFFER_PRESETS[number];
 
-export const addonManifest = {
+const baseManifest = {
   id: "community.selfhosted.stream.aggregator",
   version: "0.1.0",
   name: "SelfHosted Stream Aggregator",
   description:
     "Aggregates configured Stremio/Nuvio-compatible addons, validates streams, matches European audio/subtitle languages and exposes Original/Auto/transcoded options.",
   logo: "https://dummyimage.com/256x256/222/fff.png&text=SSA",
-  resources: ["stream"],
   types: ["movie", "series"],
   idPrefixes: ["tt"],
   behaviorHints: {
@@ -84,3 +84,19 @@ export const addonManifest = {
     }
   ]
 };
+
+export function getAddonManifest() {
+  const libraries = listEnabledLibraries();
+  return {
+    ...baseManifest,
+    resources: libraries.length ? ["stream", "catalog"] : ["stream"],
+    catalogs: libraries.map((library) => ({
+      type: library.type,
+      id: library.slug,
+      name: library.name,
+      extra: [{ name: "skip", isRequired: false }]
+    }))
+  };
+}
+
+export const addonManifest = getAddonManifest();
