@@ -5,7 +5,7 @@ import { deleteAddon, getAddon, listAddons, refreshAddonHealth, registerAddon, s
 import { clearLibraryCache } from "../libraries/library-cache.js";
 import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import { getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
+import { DOCCHI_PUBLIC_MAPPING_MODES, getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
@@ -38,6 +38,7 @@ const libraryConfigSchema = z.object({
   voteAverageGte: z.coerce.number().min(0).max(10).optional(),
   voteCountGte: z.coerce.number().int().min(0).optional(),
   itemLimit: z.coerce.number().int().min(1).max(100).optional(),
+  docchiPublicMappingMode: z.enum(["inherit", ...DOCCHI_PUBLIC_MAPPING_MODES]).optional(),
   includeAdult: z.boolean().optional(),
   timeWindow: z.enum(["day", "week"]).optional()
 }).partial();
@@ -73,6 +74,7 @@ const settingsSchema = z.object({
   tmdbLanguage: z.string().optional(),
   tmdbRegion: z.string().optional(),
   metadataSyncIntervalMinutes: z.coerce.number().refine((value) => (METADATA_SYNC_INTERVALS as readonly number[]).includes(value), { message: "Invalid metadata sync interval." }).optional(),
+  docchiPublicMappingMode: z.enum(DOCCHI_PUBLIC_MAPPING_MODES).optional(),
   autoTranscodeMinQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   autoTranscodeMaxQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   transcodePreset: z.enum(TRANSCODE_PRESETS).optional(),
@@ -86,6 +88,17 @@ const settingsSchema = z.object({
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get("/admin/settings", async () => ({ settings: getAppSettings() }));
+
+  app.get("/admin/docchi/status", async () => {
+    const addons = listAddons();
+    const matches = addons.filter(isDocchiAddon);
+    const enabled = matches.filter((addon) => addon.enabled && addon.status === "online");
+    return {
+      detected: matches.length > 0,
+      enabled: enabled.length > 0,
+      addons: matches.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, enabled: addon.enabled, status: addon.status }))
+    };
+  });
 
   app.get("/admin/languages", async () => {
     const languages = [...EUROPEAN_LANGUAGES].sort((a, b) => {
@@ -171,7 +184,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.delete("/admin/system/logs", async () => { clearSystemLogs(); writeSystemLog("info", "logs", "System logs cleared."); return { ok: true }; });
-  app.get("/admin/addons", async () => ({ addons: listAddons() }));
+  app.get("/admin/addons", async () => ({ addons: listAddons().map((addon) => ({ ...addon, detectedDocchi: isDocchiAddon(addon) })) }));
 
   app.post("/admin/addons", async (request, reply) => {
     const body = registerAddonSchema.safeParse(request.body);
@@ -179,7 +192,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const addon = await registerAddon(body.data);
     writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon registered.", { id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, status: addon.status, lastError: addon.lastError });
     reply.code(201);
-    return { addon };
+    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
   });
 
   app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/aggregate/:type/:id", async (request, reply) => {
@@ -271,14 +284,14 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const id = (request.params as { id: string }).id;
     const addon = getAddon(id);
     if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    return { addon };
+    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
   });
 
   app.post("/admin/addons/:id/check", async (request, reply) => {
     const id = (request.params as { id: string }).id;
     const addon = await refreshAddonHealth(id);
     if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    return { addon };
+    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
   });
 
   app.patch("/admin/addons/:id", async (request, reply) => {
@@ -287,7 +300,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const id = (request.params as { id: string }).id;
     const addon = setAddonEnabled(id, body.data.enabled);
     if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    return { addon };
+    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
   });
 
   app.delete("/admin/addons/:id", async (request, reply) => {
@@ -298,6 +311,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     writeSystemLog("info", "addons", "Addon deleted.", { id: result.addon.id, name: result.addon.name, manifestUrl: result.addon.manifestUrl });
     return { ok: true, addon: result.addon };
   });
+}
+
+function isDocchiAddon(addon: { name?: string; manifestUrl: string; description?: string }): boolean {
+  return /docc?h?i/i.test(`${addon.name ?? ""} ${addon.description ?? ""} ${addon.manifestUrl}`);
 }
 
 function toDiagnosticAggregatedStream(type: StreamType, mediaId: string, stream: any): AggregatedStream {
