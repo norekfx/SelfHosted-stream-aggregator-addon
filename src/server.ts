@@ -10,6 +10,7 @@ import { registerAuthRoutes, requireAdminAuth } from "./auth/auth-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
+import { findDocchiEpisodeFix } from "./docchi/docchi-public-mapper.js";
 import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shouldBypassMetadataCache } from "./libraries/library-cache.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
@@ -49,6 +50,14 @@ await app.register(registerAuthRoutes);
 await app.register(async (adminApp) => {
   adminApp.addHook("preHandler", requireAdminAuth);
   await registerAdminRoutes(adminApp);
+  adminApp.get<{ Params: { id: string } }>("/admin/docchi/episode/:id", async (request, reply) => {
+    const params = z.object({ id: z.string().regex(/^tt\d+:\d+:\d+$/i) }).safeParse(request.params);
+    if (!params.success) {
+      reply.code(400);
+      return { error: "Invalid episode id." };
+    }
+    return { fix: await findDocchiEpisodeFix(params.data.id) };
+  });
 });
 await app.register(registerTranscodeRoutes);
 await app.register(registerTranscodeVodRoutes);
