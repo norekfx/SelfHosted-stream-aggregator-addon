@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { deleteAddon, getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
+import { clearLibraryCache } from "../libraries/library-cache.js";
+import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 import { getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
@@ -12,12 +14,42 @@ import type { AggregatedStream, StreamType } from "../streams/types.js";
 import { TRANSCODE_QUALITIES } from "../stremio/manifest.js";
 import { clearSystemLogs, listSystemLogs, type SystemLogLevel, writeSystemLog } from "../system/system-log.js";
 import { runTechnicalHealthCheck } from "../system/technical-health.js";
+import { fetchTmdbCatalog } from "../tmdb/tmdb-client.js";
 
 const registerAddonSchema = z.object({ manifestUrl: z.string().url(), enabled: z.boolean().optional() });
 const updateAddonSchema = z.object({ enabled: z.boolean() });
 const aggregateParamsSchema = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) });
 const limitQuerySchema = z.object({ limit: z.coerce.number().int().positive().max(500).default(50) });
 const logsQuerySchema = z.object({ limit: z.coerce.number().int().positive().max(500).default(100), level: z.enum(["debug", "info", "warn", "error"]).optional() });
+const libraryConfigSchema = z.object({
+  language: z.string().optional(),
+  region: z.string().optional(),
+  sortBy: z.string().optional(),
+  withGenres: z.string().optional(),
+  withKeywords: z.string().optional(),
+  withOriginalLanguage: z.string().optional(),
+  withWatchProviders: z.string().optional(),
+  watchRegion: z.string().optional(),
+  primaryReleaseDateGte: z.string().optional(),
+  primaryReleaseDateLte: z.string().optional(),
+  firstAirDateGte: z.string().optional(),
+  firstAirDateLte: z.string().optional(),
+  year: z.string().optional(),
+  voteAverageGte: z.coerce.number().min(0).max(10).optional(),
+  voteCountGte: z.coerce.number().int().min(0).optional(),
+  includeAdult: z.boolean().optional(),
+  timeWindow: z.enum(["day", "week"]).optional()
+}).partial();
+const librarySchema = z.object({
+  name: z.string().min(1),
+  slug: z.string().optional(),
+  type: z.enum(["movie", "series"]),
+  source: z.literal("tmdb").optional(),
+  mode: z.enum(["discover", "trending", "popular", "top_rated", "now_playing", "upcoming", "airing_today", "on_the_air"]),
+  enabled: z.boolean().optional(),
+  sortOrder: z.coerce.number().int().optional(),
+  config: libraryConfigSchema.optional()
+});
 const settingsSchema = z.object({
   preferredAudioLanguage: z.string().min(2).optional(),
   preferredSubtitleLanguage: z.string().min(2).optional(),
@@ -35,6 +67,10 @@ const settingsSchema = z.object({
   publicBaseUrl: z.string().url().optional().or(z.literal("")),
   autoRefreshCache: z.boolean().optional(),
   showDiagnosticDetails: z.boolean().optional(),
+  tmdbApiKey: z.string().optional(),
+  tmdbReadAccessToken: z.string().optional(),
+  tmdbLanguage: z.string().optional(),
+  tmdbRegion: z.string().optional(),
   autoTranscodeMinQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   autoTranscodeMaxQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   transcodePreset: z.enum(TRANSCODE_PRESETS).optional(),
@@ -66,6 +102,52 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const settings = updateAppSettings(body.data);
     writeSystemLog("info", "settings", "Admin settings updated.", { changedKeys: Object.keys(body.data) });
     return { settings };
+  });
+
+  app.get("/admin/libraries", async () => ({ libraries: listLibraries() }));
+
+  app.post("/admin/libraries", async (request, reply) => {
+    const body = librarySchema.safeParse(request.body);
+    if (!body.success) { reply.code(400); return { error: "Invalid library payload.", details: body.error.flatten() }; }
+    const library = createLibrary(body.data);
+    writeSystemLog("info", "libraries", "Library created.", { id: library.id, name: library.name, type: library.type, mode: library.mode });
+    reply.code(201);
+    return { library };
+  });
+
+  app.patch("/admin/libraries/:id", async (request, reply) => {
+    const body = librarySchema.partial().safeParse(request.body);
+    if (!body.success) { reply.code(400); return { error: "Invalid library update payload.", details: body.error.flatten() }; }
+    const id = (request.params as { id: string }).id;
+    const library = updateLibrary(id, body.data);
+    if (!library) { reply.code(404); return { error: "Library not found." }; }
+    clearLibraryCache(library.id);
+    writeSystemLog("info", "libraries", "Library updated.", { id: library.id, name: library.name });
+    return { library };
+  });
+
+  app.post("/admin/libraries/:id/test", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const library = getLibrary(id);
+    if (!library) { reply.code(404); return { error: "Library not found." }; }
+    const metas = await fetchTmdbCatalog(library, 1);
+    return { library, metas: metas.slice(0, 10) };
+  });
+
+  app.post("/admin/libraries/:id/refresh", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const library = getLibrary(id);
+    if (!library) { reply.code(404); return { error: "Library not found." }; }
+    const deleted = clearLibraryCache(library.id);
+    return { ok: true, deleted };
+  });
+
+  app.delete("/admin/libraries/:id", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const deleted = deleteLibrary(id);
+    if (!deleted) { reply.code(404); return { error: "Library not found." }; }
+    writeSystemLog("info", "libraries", "Library deleted.", { id });
+    return { ok: true };
   });
 
   app.get("/admin/system/health", async () => {
