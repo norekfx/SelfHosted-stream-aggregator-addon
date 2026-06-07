@@ -26,7 +26,7 @@ export type AppSettings = {
   tmdbReadAccessToken?: string;
   tmdbLanguage: string;
   tmdbRegion: string;
-  metadataSyncIntervalMinutes: MetadataSyncIntervalMinutes;
+  metadataSyncIntervalMinutes: number;
   autoTranscodeMinQuality: string;
   autoTranscodeMaxQuality: string;
   transcodePreset: string;
