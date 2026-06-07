@@ -98,5 +98,3 @@ export function getAddonManifest() {
     }))
   };
 }
-
-export const addonManifest = getAddonManifest();
