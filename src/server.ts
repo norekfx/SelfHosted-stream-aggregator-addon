@@ -54,34 +54,12 @@ app.get("/health", async () => ({ status: "ok" }));
 
 app.get("/manifest.json", async () => getAddonManifest());
 
-app.get<{
-  Params: { type: "movie" | "series"; id: string; extra?: string };
-}>(["/catalog/:type/:id.json", "/catalog/:type/:id/:extra.json"], async (request, reply) => {
-  const params = z.object({
-    type: z.enum(["movie", "series"]),
-    id: z.string().min(1),
-    extra: z.string().optional()
-  }).safeParse(request.params);
+app.get<{ Params: { type: "movie" | "series"; id: string } }>("/catalog/:type/:id.json", async (request, reply) => {
+  return handleCatalogRequest(request.params, reply);
+});
 
-  if (!params.success) {
-    reply.code(400);
-    return { metas: [] };
-  }
-
-  const library = getLibraryForCatalog(params.data.type, params.data.id);
-  if (!library) {
-    return { metas: [] };
-  }
-
-  const page = parseCatalogPage(params.data.extra);
-  const cached = getCachedLibraryItems(library.id, page);
-  if (cached) {
-    return { metas: cached };
-  }
-
-  const metas = await fetchTmdbCatalog(library, page);
-  saveLibraryItems(library.id, page, metas);
-  return { metas };
+app.get<{ Params: { type: "movie" | "series"; id: string; extra: string } }>("/catalog/:type/:id/:extra.json", async (request, reply) => {
+  return handleCatalogRequest(request.params, reply);
 });
 
 app.get<{
@@ -114,6 +92,34 @@ app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (re
 
   reply.redirect(original.originalUrl);
 });
+
+async function handleCatalogRequest(rawParams: unknown, reply: { code: (statusCode: number) => unknown }) {
+  const params = z.object({
+    type: z.enum(["movie", "series"]),
+    id: z.string().min(1),
+    extra: z.string().optional()
+  }).safeParse(rawParams);
+
+  if (!params.success) {
+    reply.code(400);
+    return { metas: [] };
+  }
+
+  const library = getLibraryForCatalog(params.data.type, params.data.id);
+  if (!library) {
+    return { metas: [] };
+  }
+
+  const page = parseCatalogPage(params.data.extra);
+  const cached = getCachedLibraryItems(library.id, page);
+  if (cached) {
+    return { metas: cached };
+  }
+
+  const metas = await fetchTmdbCatalog(library, page);
+  saveLibraryItems(library.id, page, metas);
+  return { metas };
+}
 
 function parseCatalogPage(extra?: string): number {
   if (!extra) return 1;
