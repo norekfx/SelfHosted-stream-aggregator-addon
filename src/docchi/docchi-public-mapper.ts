@@ -5,6 +5,7 @@ import { getAppSettings } from "../settings/app-settings.js";
 import { writeSystemLog } from "../system/system-log.js";
 import type { StreamType } from "../streams/types.js";
 import { fetchTmdbMeta } from "../tmdb/tmdb-client.js";
+import { saveDocchiEpisodeMappingFromFix } from "./docchi-episode-mapping-store.js";
 
 export type DocchiEpisodeFix = {
   originalId: string;
@@ -129,6 +130,7 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
       confidence: match.confidence
     };
     cache.set(originalId, fix);
+    saveDocchiEpisodeMappingFromFix(fix);
     return fix;
   }
 
