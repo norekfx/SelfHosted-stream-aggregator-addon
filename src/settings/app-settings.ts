@@ -8,6 +8,11 @@ export type AppSettings = {
   preferredAudioLanguage: string;
   preferredSubtitleLanguage: string;
   preferDebrid: boolean;
+  detectDebridPlaceholders: boolean;
+  debridPlaceholderMinSizeMb: number;
+  debridPlaceholderMinDurationMinutes: number;
+  debridPlaceholderCompareDeclaredSize: boolean;
+  debridPlaceholderSizeDifferenceGb: number;
   defaultTranscodeBufferPreset: string;
   streamValidationTimeoutMs: number;
   linkValidationMode: LinkValidationMode;
@@ -35,6 +40,11 @@ const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferredSubtitleLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferDebrid: true,
+  detectDebridPlaceholders: false,
+  debridPlaceholderMinSizeMb: 30,
+  debridPlaceholderMinDurationMinutes: 5,
+  debridPlaceholderCompareDeclaredSize: false,
+  debridPlaceholderSizeDifferenceGb: 5,
   defaultTranscodeBufferPreset: env.DEFAULT_TRANSCODE_BUFFER_PRESET,
   streamValidationTimeoutMs: env.STREAM_VALIDATION_TIMEOUT_MS,
   linkValidationMode: "best",
@@ -60,7 +70,7 @@ export function getAppSettings(): AppSettings {
 
   const settings = { ...defaults };
   for (const row of rows) {
-    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps"].includes(row.key)) {
+    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb"].includes(row.key)) {
       const parsed = Number.parseInt(row.value, 10);
       if (Number.isFinite(parsed)) {
         (settings as Record<string, unknown>)[row.key] = parsed;
@@ -68,7 +78,7 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "preferDebrid" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails") {
+    if (row.key === "preferDebrid" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails") {
       settings[row.key] = row.value === "true";
       continue;
     }
@@ -153,6 +163,12 @@ function normalizeLanguageCode(value: string): string {
 function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   const normalized = { ...settings };
   normalized.preferDebrid = normalized.preferDebrid !== false;
+  normalized.detectDebridPlaceholders = normalized.detectDebridPlaceholders === true;
+  normalized.debridPlaceholderCompareDeclaredSize = normalized.debridPlaceholderCompareDeclaredSize === true;
+  normalized.debridPlaceholderMinSizeMb = clampNumber(normalized.debridPlaceholderMinSizeMb, 1, 102400, defaults.debridPlaceholderMinSizeMb);
+  normalized.debridPlaceholderMinDurationMinutes = clampNumber(normalized.debridPlaceholderMinDurationMinutes, 1, 1440, defaults.debridPlaceholderMinDurationMinutes);
+  normalized.debridPlaceholderSizeDifferenceGb = clampNumber(normalized.debridPlaceholderSizeDifferenceGb, 1, 1024, defaults.debridPlaceholderSizeDifferenceGb);
+
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMinQuality as never)) normalized.autoTranscodeMinQuality = defaults.autoTranscodeMinQuality;
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMaxQuality as never)) normalized.autoTranscodeMaxQuality = defaults.autoTranscodeMaxQuality;
   if (!LINK_VALIDATION_MODES.includes(normalized.linkValidationMode as never)) normalized.linkValidationMode = defaults.linkValidationMode;
