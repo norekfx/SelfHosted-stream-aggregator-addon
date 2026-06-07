@@ -7,6 +7,7 @@ export type LinkValidationMode = "best" | "all" | "5" | "10" | "20" | "40" | "80
 export type AppSettings = {
   preferredAudioLanguage: string;
   preferredSubtitleLanguage: string;
+  preferDebrid: boolean;
   defaultTranscodeBufferPreset: string;
   streamValidationTimeoutMs: number;
   linkValidationMode: LinkValidationMode;
@@ -33,6 +34,7 @@ export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80"
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferredSubtitleLanguage: DEFAULT_PREFERRED_LANGUAGE,
+  preferDebrid: true,
   defaultTranscodeBufferPreset: env.DEFAULT_TRANSCODE_BUFFER_PRESET,
   streamValidationTimeoutMs: env.STREAM_VALIDATION_TIMEOUT_MS,
   linkValidationMode: "best",
@@ -66,7 +68,7 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails") {
+    if (row.key === "preferDebrid" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails") {
       settings[row.key] = row.value === "true";
       continue;
     }
@@ -150,6 +152,7 @@ function normalizeLanguageCode(value: string): string {
 
 function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   const normalized = { ...settings };
+  normalized.preferDebrid = normalized.preferDebrid !== false;
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMinQuality as never)) normalized.autoTranscodeMinQuality = defaults.autoTranscodeMinQuality;
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMaxQuality as never)) normalized.autoTranscodeMaxQuality = defaults.autoTranscodeMaxQuality;
   if (!LINK_VALIDATION_MODES.includes(normalized.linkValidationMode as never)) normalized.linkValidationMode = defaults.linkValidationMode;
