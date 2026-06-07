@@ -169,10 +169,14 @@ function parseContentLength(value: string | null): number | undefined {
 
 function parseDeclaredSizeBytes(value: string): number | undefined {
   const match = value.match(/(\d+(?:[.,]\d+)?)\s*(gb|gib|mb|mib)\b/i);
-  if (!match) return undefined;
-  const amount = Number.parseFloat(match[1].replace(",", "."));
+  const amountText = match?.[1];
+  const unitText = match?.[2];
+  if (!amountText || !unitText) return undefined;
+
+  const amount = Number.parseFloat(amountText.replace(",", "."));
   if (!Number.isFinite(amount)) return undefined;
-  const unit = match[2].toLowerCase();
+
+  const unit = unitText.toLowerCase();
   return unit.startsWith("g") ? Math.round(amount * GB) : Math.round(amount * MB);
 }
 
