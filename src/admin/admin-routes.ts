@@ -5,7 +5,7 @@ import { deleteAddon, getAddon, listAddons, refreshAddonHealth, registerAddon, s
 import { clearLibraryCache } from "../libraries/library-cache.js";
 import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import { getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
+import { getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
@@ -14,7 +14,7 @@ import type { AggregatedStream, StreamType } from "../streams/types.js";
 import { TRANSCODE_QUALITIES } from "../stremio/manifest.js";
 import { clearSystemLogs, listSystemLogs, type SystemLogLevel, writeSystemLog } from "../system/system-log.js";
 import { runTechnicalHealthCheck } from "../system/technical-health.js";
-import { fetchTmdbCatalog } from "../tmdb/tmdb-client.js";
+import { fetchTmdbCatalog, fetchTmdbWatchProviders } from "../tmdb/tmdb-client.js";
 
 const registerAddonSchema = z.object({ manifestUrl: z.string().url(), enabled: z.boolean().optional() });
 const updateAddonSchema = z.object({ enabled: z.boolean() });
@@ -71,6 +71,7 @@ const settingsSchema = z.object({
   tmdbReadAccessToken: z.string().optional(),
   tmdbLanguage: z.string().optional(),
   tmdbRegion: z.string().optional(),
+  metadataSyncIntervalMinutes: z.coerce.number().pipe(z.union(METADATA_SYNC_INTERVALS.map((value) => z.literal(value)) as [z.ZodLiteral<0>, z.ZodLiteral<10>, z.ZodLiteral<30>, z.ZodLiteral<60>, z.ZodLiteral<120>, z.ZodLiteral<240>, z.ZodLiteral<480>, z.ZodLiteral<720>, z.ZodLiteral<1440>] })).optional(),
   autoTranscodeMinQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   autoTranscodeMaxQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   transcodePreset: z.enum(TRANSCODE_PRESETS).optional(),
@@ -102,6 +103,12 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const settings = updateAppSettings(body.data);
     writeSystemLog("info", "settings", "Admin settings updated.", { changedKeys: Object.keys(body.data) });
     return { settings };
+  });
+
+  app.get<{ Params: { type: "movie" | "series" } }>("/admin/tmdb/watch-providers/:type", async (request, reply) => {
+    const params = z.object({ type: z.enum(["movie", "series"]) }).safeParse(request.params);
+    if (!params.success) { reply.code(400); return { error: "Invalid provider type." }; }
+    return { providers: await fetchTmdbWatchProviders(params.data.type) };
   });
 
   app.get("/admin/libraries", async () => ({ libraries: listLibraries() }));
