@@ -21,6 +21,11 @@ type AddonRow = {
   response_time_ms: number | null;
 };
 
+export type DeleteAddonResult =
+  | { status: "deleted"; addon: RegisteredAddon }
+  | { status: "enabled"; addon: RegisteredAddon }
+  | { status: "not_found" };
+
 export async function registerAddon(input: AddonRegistrationInput): Promise<RegisteredAddon> {
   const manifestUrl = normalizeManifestUrl(input.manifestUrl);
   const existing = findAddonByManifestUrl(manifestUrl);
@@ -112,6 +117,20 @@ export function setAddonEnabled(addonId: string, enabled: boolean): RegisteredAd
 
   updateAddon(updated);
   return updated;
+}
+
+export function deleteAddon(addonId: string): DeleteAddonResult {
+  const addon = getAddon(addonId);
+  if (!addon) {
+    return { status: "not_found" };
+  }
+
+  if (addon.enabled) {
+    return { status: "enabled", addon };
+  }
+
+  getDatabase().prepare("DELETE FROM addons WHERE id = ?").run(addonId);
+  return { status: "deleted", addon };
 }
 
 function findAddonByManifestUrl(manifestUrl: string): RegisteredAddon | undefined {
