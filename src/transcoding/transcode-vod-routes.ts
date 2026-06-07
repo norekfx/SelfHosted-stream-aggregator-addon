@@ -18,49 +18,20 @@ const vodSegmentParamsSchema = vodParamsSchema.extend({ segment: z.string().rege
 
 type VodProgress = { frame?: number; fps?: number; bitrate?: string; outTime?: string; speed?: string; progress?: string };
 type VodStatus = "starting" | "running" | "exited" | "failed";
-type VodSession = {
-  id: string;
-  streamId: string;
-  title?: string;
-  sourceAddon?: string;
-  sourceQuality?: string;
-  quality: TranscodeQuality;
-  bufferPreset: BufferPreset;
-  originalUrl: string;
-  durationSeconds: number;
-  segmentSeconds: number;
-  outputDir: string;
-  playlistPath: string;
-  createdAt: string;
-  updatedAt: string;
-  status: VodStatus;
-  error?: string;
-  lastLog?: string;
-  activeSegment?: string;
-  progress?: VodProgress;
-  speedStats?: TranscodeSpeedStats;
-  activeProcess?: ChildProcessWithoutNullStreams;
-};
+type VodSession = { id: string; streamId: string; title?: string; sourceAddon?: string; sourceQuality?: string; quality: TranscodeQuality; bufferPreset: BufferPreset; originalUrl: string; durationSeconds: number; segmentSeconds: number; outputDir: string; playlistPath: string; createdAt: string; updatedAt: string; status: VodStatus; error?: string; lastLog?: string; activeSegment?: string; progress?: VodProgress; speedStats?: TranscodeSpeedStats; activeProcess?: ChildProcessWithoutNullStreams };
 
 const vodSessions = new Map<string, VodSession>();
 const activeSegments = new Map<string, Promise<void>>();
+const sessionQueues = new Map<string, Promise<void>>();
 
 export function listVodTranscodeSessions(): Array<any> {
-  return Array.from(vodSessions.values())
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, 50)
-    .map((session) => {
-      const profile = getTranscodeProfile(session.quality, session.bufferPreset);
-      const segmentCount = countGeneratedSegments(session);
-      const { activeProcess: _activeProcess, ...snapshot } = session;
-      return {
-        ...snapshot,
-        mode: "vod",
-        startedAt: session.createdAt,
-        buffer: { segmentCount, estimatedSeconds: segmentCount * session.segmentSeconds, segmentSeconds: session.segmentSeconds },
-        profile
-      };
-    });
+  return Array.from(vodSessions.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50).map((session) => {
+    const profile = getTranscodeProfile(session.quality, session.bufferPreset);
+    const segmentCount = countGeneratedSegments(session);
+    const queued = Array.from(activeSegments.keys()).filter((key) => key.startsWith(`${session.id}:`)).length;
+    const { activeProcess: _activeProcess, ...snapshot } = session;
+    return { ...snapshot, mode: "vod", modeLabel: "VOD HLS seek", startedAt: session.createdAt, queuedSegments: queued, buffer: { segmentCount, estimatedSeconds: segmentCount * session.segmentSeconds, segmentSeconds: session.segmentSeconds }, profile };
+  });
 }
 
 export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<void> {
@@ -96,7 +67,7 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
       if (!existsSync(segmentPath)) await generateVodSegment(session, params.data.segment);
       if (!existsSync(segmentPath)) { reply.code(503); return { error: "VOD segment was not generated." }; }
       const segmentIndex = parseSegmentIndex(params.data.segment);
-      prewarmVodSegments(session, segmentIndex + 1, 3);
+      prewarmVodSegments(session, segmentIndex + 1, 2);
       reply.header("content-type", "video/mp2t");
       reply.header("cache-control", "public, max-age=300");
       return createReadStream(segmentPath);
@@ -146,8 +117,14 @@ async function generateVodSegment(session: VodSession, segmentName: string): Pro
   const key = `${session.id}:${segmentName}`;
   const existing = activeSegments.get(key);
   if (existing) return existing;
-  const promise = runVodSegmentFfmpeg(session, segmentName).finally(() => activeSegments.delete(key));
+  const previous = sessionQueues.get(session.id) ?? Promise.resolve();
+  const promise = previous.catch(() => undefined).then(async () => {
+    const segmentPath = join(session.outputDir, segmentName);
+    if (existsSync(segmentPath)) return;
+    await runVodSegmentFfmpeg(session, segmentName);
+  }).finally(() => activeSegments.delete(key));
   activeSegments.set(key, promise);
+  sessionQueues.set(session.id, promise.catch(() => undefined));
   return promise;
 }
 
@@ -182,7 +159,7 @@ async function runVodSegmentFfmpeg(session: VodSession, segmentName: string): Pr
   session.updatedAt = new Date().toISOString();
   await runProcess(env.FFMPEG_PATH, args, session);
   await rename(tempOutputPath, outputPath);
-  session.status = "exited";
+  session.status = activeSegments.size > 1 ? "running" : "exited";
   session.activeSegment = undefined;
   session.updatedAt = new Date().toISOString();
   writeSystemLog("info", "transcode-vod", "VOD segment generated.", { streamId: session.streamId, quality: session.quality, segmentName, startSeconds, durationSeconds, speed: session.progress?.speed, fps: session.progress?.fps });
@@ -219,11 +196,7 @@ function updateVodSpeedStats(session: VodSession, rawSpeed: string): void {
 }
 
 function countGeneratedSegments(session: VodSession): number {
-  try {
-    return readdirSync(session.outputDir).filter((file) => /^segment_\d{5}\.ts$/.test(file)).length;
-  } catch {
-    return 0;
-  }
+  try { return readdirSync(session.outputDir).filter((file) => /^segment_\d{5}\.ts$/.test(file)).length; } catch { return 0; }
 }
 
 function getSegmentCount(session: VodSession): number { return Math.max(1, Math.ceil(session.durationSeconds / session.segmentSeconds)); }
