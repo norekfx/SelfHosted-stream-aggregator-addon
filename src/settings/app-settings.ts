@@ -9,6 +9,7 @@ export type AppSettings = {
   preferredSubtitleLanguage: string;
   preferDebrid: boolean;
   detectDebridPlaceholders: boolean;
+  debridPlaceholderValidationMode: LinkValidationMode;
   debridPlaceholderMinSizeMb: number;
   debridPlaceholderMinDurationMinutes: number;
   debridPlaceholderCompareDeclaredSize: boolean;
@@ -41,6 +42,7 @@ const defaults: AppSettings = {
   preferredSubtitleLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferDebrid: true,
   detectDebridPlaceholders: false,
+  debridPlaceholderValidationMode: "best",
   debridPlaceholderMinSizeMb: 30,
   debridPlaceholderMinDurationMinutes: 5,
   debridPlaceholderCompareDeclaredSize: false,
@@ -172,6 +174,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMinQuality as never)) normalized.autoTranscodeMinQuality = defaults.autoTranscodeMinQuality;
   if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMaxQuality as never)) normalized.autoTranscodeMaxQuality = defaults.autoTranscodeMaxQuality;
   if (!LINK_VALIDATION_MODES.includes(normalized.linkValidationMode as never)) normalized.linkValidationMode = defaults.linkValidationMode;
+  if (!LINK_VALIDATION_MODES.includes(normalized.debridPlaceholderValidationMode as never)) normalized.debridPlaceholderValidationMode = defaults.debridPlaceholderValidationMode;
 
   const minIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMinQuality as never);
   const maxIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMaxQuality as never);
