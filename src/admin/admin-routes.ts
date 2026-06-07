@@ -196,22 +196,20 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 }
 
 function toDiagnosticAggregatedStream(type: StreamType, mediaId: string, stream: any): AggregatedStream {
-  const hash = createHash("sha1").update(JSON.stringify({ type, mediaId, url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash, fileIdx: stream.fileIdx, title: stream.title, addonId: stream.addonId })).digest("hex");
+  const title = stream.title ?? stream.name ?? stream.infoHash ?? stream.url ?? "Unknown stream";
+  const hash = createHash("sha1").update(JSON.stringify({ type, mediaId, url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash, fileIdx: stream.fileIdx, title, addonId: stream.addonId })).digest("hex");
+  const validationStatus = stream.validation?.status === "working" || stream.validation?.status === "failed" ? stream.validation.status : "pending";
   return {
     id: `${type}:${mediaId}:${hash}`,
-    type,
-    mediaId,
-    title: stream.title ?? stream.name ?? stream.infoHash ?? stream.url ?? "Unknown stream",
-    name: stream.name,
-    description: stream.description,
+    title,
+    name: stream.name ?? title,
     originalUrl: stream.url ?? stream.externalUrl,
     sourceAddon: stream.addonName ?? stream.addonId,
     quality: stream.metadata?.quality,
     audioLanguage: stream.metadata?.audioLanguage,
     subtitleLanguage: stream.metadata?.subtitleLanguage,
-    validationStatus: stream.validation?.status,
-    validationReason: stream.validation?.reason,
-    score: stream.score,
-    scoreReasons: stream.scoreReasons
+    isValidated: validationStatus !== "pending",
+    validationStatus,
+    validationReason: stream.validation?.reason
   };
 }
