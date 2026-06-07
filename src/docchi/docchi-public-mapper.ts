@@ -33,7 +33,7 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
   const docchiAddons = getEnabledDocchiAddons();
   if (!docchiAddons.length) return [];
 
-  const result = await findDocchiEpisodeFix(id, { addons: docchiAddons });
+  const result = await findDocchiEpisodeFix(id, { addons: docchiAddons, force: false });
   if (!result.fixed || result.mappedId === id) return [];
 
   writeSystemLog("info", "docchi", "Docchi fixed episode index for stream aggregation.", {
@@ -47,7 +47,7 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
 }
 
 export async function findDocchiEpisodeFix(originalId: string, options: { addons?: RegisteredAddon[]; force?: boolean } = {}): Promise<DocchiEpisodeFix> {
-  const forced = options.force === true;
+  const forced = options.force === true || options.addons === undefined;
   const cached = cache.get(originalId);
   if (cached && !forced) return cached;
 
