@@ -50,16 +50,27 @@ type TmdbWatchProviderResult = {
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
+const TMDB_PAGE_SIZE = 20;
+const DEFAULT_LIBRARY_ITEM_LIMIT = 50;
+const MAX_LIBRARY_ITEM_LIMIT = 100;
 
 export async function fetchTmdbCatalog(library: Library, page = 1): Promise<StremioCatalogMeta[]> {
   const settings = getAppSettings();
   assertTmdbConfigured(settings);
 
-  const list = await tmdbRequest<TmdbListResult>(buildLibraryPath(library), buildLibraryQuery(library, settings, page), settings);
-  const metas = await Promise.all(
-    list.results.slice(0, 30).map((item) => mapTmdbItemToMeta(library, item, settings).catch(() => null))
+  const itemLimit = getLibraryItemLimit(library);
+  const tmdbStartPage = Math.max(1, ((page - 1) * Math.ceil(itemLimit / TMDB_PAGE_SIZE)) + 1);
+  const requestedPages = Math.ceil(itemLimit / TMDB_PAGE_SIZE);
+  const pageResults = await Promise.all(
+    Array.from({ length: requestedPages }, (_, index) =>
+      tmdbRequest<TmdbListResult>(buildLibraryPath(library), buildLibraryQuery(library, settings, tmdbStartPage + index), settings).catch(() => null)
+    )
   );
-  return metas.filter((item): item is StremioCatalogMeta => Boolean(item));
+  const items = pageResults.flatMap((result) => result?.results ?? []).slice(0, itemLimit);
+  const metas = await Promise.all(
+    items.map((item) => mapTmdbItemToMeta(library, item, settings).catch(() => null))
+  );
+  return metas.filter((item): item is StremioCatalogMeta => Boolean(item)).slice(0, itemLimit);
 }
 
 export async function fetchTmdbMeta(type: "movie" | "series", imdbId: string): Promise<StremioCatalogMeta | null> {
@@ -227,6 +238,12 @@ function buildLibraryQuery(library: Library, settings: ReturnType<typeof getAppS
   }
 
   return query;
+}
+
+function getLibraryItemLimit(library: Library): number {
+  const value = library.config.itemLimit ?? DEFAULT_LIBRARY_ITEM_LIMIT;
+  if (!Number.isFinite(value)) return DEFAULT_LIBRARY_ITEM_LIMIT;
+  return Math.min(MAX_LIBRARY_ITEM_LIMIT, Math.max(1, Math.round(value)));
 }
 
 function assertTmdbConfigured(settings: ReturnType<typeof getAppSettings>): void {
