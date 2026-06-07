@@ -128,6 +128,42 @@ const migrations: Array<{ id: number; name: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level);
       CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source);
     `
+  },
+  {
+    id: 6,
+    name: "create_libraries",
+    sql: `
+      CREATE TABLE IF NOT EXISTS libraries (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'tmdb',
+        mode TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        config_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_libraries_enabled ON libraries(enabled);
+      CREATE INDEX IF NOT EXISTS idx_libraries_type ON libraries(type);
+      CREATE INDEX IF NOT EXISTS idx_libraries_sort_order ON libraries(sort_order);
+
+      CREATE TABLE IF NOT EXISTS library_cache (
+        cache_key TEXT PRIMARY KEY,
+        library_id TEXT NOT NULL,
+        page INTEGER NOT NULL,
+        items_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY(library_id) REFERENCES libraries(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_library_cache_library_page ON library_cache(library_id, page);
+      CREATE INDEX IF NOT EXISTS idx_library_cache_expires_at ON library_cache(expires_at);
+    `
   }
 ];
 
