@@ -47,6 +47,16 @@ export type LibraryInput = {
   config?: LibraryConfig;
 };
 
+export type StremioVideo = {
+  id: string;
+  title: string;
+  released?: string;
+  season?: number;
+  episode?: number;
+  overview?: string;
+  thumbnail?: string;
+};
+
 export type StremioCatalogMeta = {
   id: string;
   type: LibraryMediaType;
@@ -55,4 +65,16 @@ export type StremioCatalogMeta = {
   background?: string;
   description?: string;
   releaseInfo?: string;
+  released?: string;
+  imdbRating?: string;
+  genres?: string[];
+  runtime?: string;
+  trailers?: Array<{ source: string; type: "Trailer" }>;
+  videos?: StremioVideo[];
+};
+
+export type TmdbWatchProvider = {
+  id: number;
+  name: string;
+  logo?: string;
 };
