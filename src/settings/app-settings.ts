@@ -3,6 +3,7 @@ import { DEFAULT_PREFERRED_LANGUAGE, EUROPEAN_LANGUAGES } from "../languages/eur
 import { env } from "../config/env.js";
 
 export type LinkValidationMode = "best" | "all" | "5" | "10" | "20" | "40" | "80" | "100" | "150" | "200";
+export type MetadataSyncIntervalMinutes = 0 | 10 | 30 | 60 | 120 | 240 | 480 | 720 | 1440;
 
 export type AppSettings = {
   preferredAudioLanguage: string;
@@ -25,6 +26,7 @@ export type AppSettings = {
   tmdbReadAccessToken?: string;
   tmdbLanguage: string;
   tmdbRegion: string;
+  metadataSyncIntervalMinutes: MetadataSyncIntervalMinutes;
   autoTranscodeMinQuality: string;
   autoTranscodeMaxQuality: string;
   transcodePreset: string;
@@ -40,6 +42,7 @@ const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language
 export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "4k"] as const;
 export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
 export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80", "100", "150", "200"] as const;
+export const METADATA_SYNC_INTERVALS = [0, 10, 30, 60, 120, 240, 480, 720, 1440] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
@@ -62,6 +65,7 @@ const defaults: AppSettings = {
   tmdbReadAccessToken: undefined,
   tmdbLanguage: "pl-PL",
   tmdbRegion: "PL",
+  metadataSyncIntervalMinutes: 1440,
   autoTranscodeMinQuality: "144p",
   autoTranscodeMaxQuality: "1080p",
   transcodePreset: "veryfast",
@@ -80,7 +84,7 @@ export function getAppSettings(): AppSettings {
 
   const settings = { ...defaults };
   for (const row of rows) {
-    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb"].includes(row.key)) {
+    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb", "metadataSyncIntervalMinutes"].includes(row.key)) {
       const parsed = Number.parseInt(row.value, 10);
       if (Number.isFinite(parsed)) {
         (settings as Record<string, unknown>)[row.key] = parsed;
@@ -163,6 +167,11 @@ export function getEffectiveTranscodeSettings(): AppSettings {
   return getAppSettings();
 }
 
+export function getMetadataSyncTtlMs(): number {
+  const minutes = getAppSettings().metadataSyncIntervalMinutes;
+  return minutes <= 0 ? 0 : minutes * 60 * 1000;
+}
+
 function normalizeLanguageCode(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return DEFAULT_PREFERRED_LANGUAGE;
@@ -179,6 +188,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.tmdbReadAccessToken = normalized.tmdbReadAccessToken?.trim() || undefined;
   normalized.tmdbLanguage = normalized.tmdbLanguage?.trim() || defaults.tmdbLanguage;
   normalized.tmdbRegion = normalized.tmdbRegion?.trim().toUpperCase() || defaults.tmdbRegion;
+  normalized.metadataSyncIntervalMinutes = normalizeSyncInterval(normalized.metadataSyncIntervalMinutes);
   normalized.debridPlaceholderMinSizeMb = clampNumber(normalized.debridPlaceholderMinSizeMb, 1, 102400, defaults.debridPlaceholderMinSizeMb);
   normalized.debridPlaceholderMinDurationMinutes = clampNumber(normalized.debridPlaceholderMinDurationMinutes, 1, 1440, defaults.debridPlaceholderMinDurationMinutes);
   normalized.debridPlaceholderSizeDifferenceGb = clampNumber(normalized.debridPlaceholderSizeDifferenceGb, 1, 1024, defaults.debridPlaceholderSizeDifferenceGb);
@@ -207,6 +217,11 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   if (normalized.transcodeBitrateMinKbps > normalized.transcodeBitrateMaxKbps) normalized.transcodeBitrateMinKbps = normalized.transcodeBitrateMaxKbps;
 
   return normalized;
+}
+
+function normalizeSyncInterval(value: number): MetadataSyncIntervalMinutes {
+  const parsed = Number.isFinite(value) ? Math.round(value) : defaults.metadataSyncIntervalMinutes;
+  return METADATA_SYNC_INTERVALS.includes(parsed as MetadataSyncIntervalMinutes) ? parsed as MetadataSyncIntervalMinutes : defaults.metadataSyncIntervalMinutes;
 }
 
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
