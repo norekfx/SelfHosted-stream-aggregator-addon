@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdirSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -220,7 +220,6 @@ function updateVodSpeedStats(session: VodSession, rawSpeed: string): void {
 
 function countGeneratedSegments(session: VodSession): number {
   try {
-    const { readdirSync } = require("node:fs") as typeof import("node:fs");
     return readdirSync(session.outputDir).filter((file) => /^segment_\d{5}\.ts$/.test(file)).length;
   } catch {
     return 0;
