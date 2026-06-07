@@ -37,6 +37,7 @@ const libraryConfigSchema = z.object({
   year: z.string().optional(),
   voteAverageGte: z.coerce.number().min(0).max(10).optional(),
   voteCountGte: z.coerce.number().int().min(0).optional(),
+  itemLimit: z.coerce.number().int().min(1).max(100).optional(),
   includeAdult: z.boolean().optional(),
   timeWindow: z.enum(["day", "week"]).optional()
 }).partial();
