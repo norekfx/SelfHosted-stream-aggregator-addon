@@ -303,6 +303,69 @@ function playVodDiagnosticUrl(url, mode) {
   }
 }
 
+function installHistoryDetailsPatch() {
+  if (document.body?.dataset.fullHistoryDetailsPatch === "1") return;
+  if (document.body) document.body.dataset.fullHistoryDetailsPatch = "1";
+
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-history-details]");
+    const historyId = button?.dataset?.historyDetails;
+    if (!historyId) return;
+    setTimeout(() => renderFullHistoryDetails(historyId), 350);
+  }, true);
+}
+
+async function renderFullHistoryDetails(historyId) {
+  const target = document.getElementById("historyDetails");
+  if (!target) return;
+
+  try {
+    const response = await originalFetch(`/admin/history/${encodeURIComponent(historyId)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const details = data.details;
+    const result = details?.result;
+    if (!details || !result) return;
+
+    const selectedOriginal = details.selectedOriginal ?? result.selectedOriginal;
+    const selectedKey = getHistoryStreamKey(selectedOriginal);
+    const rankByKey = new Map((result.rankedStreams ?? []).map((stream) => [getHistoryStreamKey(stream), stream]));
+    const streams = (result.streams ?? []).map((stream, index) => ({ ...stream, ...(rankByKey.get(getHistoryStreamKey(stream)) ?? {}), originalIndex: index + 1 }));
+
+    target.innerHTML = `<div class="kv-list"><div class="kv"><span>Media</span><strong>${escapeTranscodeHtml(details.type)}:${escapeTranscodeHtml(details.mediaId)}</strong></div><div class="kv"><span>Wybrany Original</span><strong>${escapeTranscodeHtml(selectedOriginal?.title ?? selectedOriginal?.name ?? "brak")}</strong></div><div class="kv"><span>Statystyki</span><strong>${details.workingStreamCount}/${details.streamCount} działa | ${result.validatedStreamCount ?? details.workingStreamCount + details.failedStreamCount + details.unsupportedStreamCount} sprawdzone | ${streams.length} odebrane</strong></div></div><p>Historia pokazuje teraz wszystkie streamy zwrócone przez addony. Przy trybie „Szukanie najlepszego” większość pozycji może mieć status „nie sprawdzone”, bo walidacja zatrzymała się po pierwszym działającym wyniku.</p><h3>Znalezione pliki (${streams.length})</h3>${streams.length ? streams.map((stream) => renderFullHistoryStreamCard(stream, selectedKey)).join("") : '<div class="list empty">Brak plików w szczegółach.</div>'}`;
+  } catch (error) {
+    target.innerHTML = `<div class="list empty">Nie udało się wczytać pełnych szczegółów historii: ${escapeTranscodeHtml(error instanceof Error ? error.message : "nieznany błąd")}</div>`;
+  }
+}
+
+function renderFullHistoryStreamCard(stream, selectedKey) {
+  const metadata = stream.metadata ?? {};
+  const validation = stream.validation ?? {};
+  const title = stream.title || stream.name || metadata.rawText || stream.url || stream.externalUrl || `Stream #${stream.originalIndex ?? "-"}`;
+  const isSelected = getHistoryStreamKey(stream) === selectedKey;
+  const status = isSelected ? "selected" : (validation.status ?? stream.validationStatus ?? "pending");
+  const scoreReasons = Array.isArray(stream.scoreReasons) ? stream.scoreReasons : [];
+  const matchedTokens = Array.isArray(metadata.matchedTokens) ? metadata.matchedTokens : [];
+  const reason = isSelected ? "Wybrany jako najlepszy działający Original." : getFullHistoryReason(stream);
+  const url = stream.url || stream.externalUrl || "";
+
+  return `<article class="stream-card"><header><strong>#${escapeTranscodeHtml(stream.originalIndex ?? "-")} ${escapeTranscodeHtml(title)}</strong>${badge(status)}</header><div class="stream-meta"><span>addon: ${escapeTranscodeHtml(stream.addonName || stream.sourceAddon || stream.addonId || "-")}</span><span>jakość: ${escapeTranscodeHtml(metadata.quality || stream.quality || "unknown")}</span><span>źródło: ${escapeTranscodeHtml(metadata.source || "unknown")}</span><span>kodek: ${escapeTranscodeHtml(metadata.videoCodec || "unknown")}</span><span>audio: ${escapeTranscodeHtml(metadata.audioLanguage || stream.audioLanguage || "-")}</span><span>typ audio: ${escapeTranscodeHtml(metadata.audioKind || "-")}</span><span>napisy: ${escapeTranscodeHtml(metadata.subtitleLanguage || stream.subtitleLanguage || "-")}</span><span>rozmiar: ${escapeTranscodeHtml(metadata.size || "-")}</span><span>wynik: ${escapeTranscodeHtml(stream.score ?? "-")}</span><span>walidacja: ${escapeTranscodeHtml(validation.method || "-")} ${escapeTranscodeHtml(validation.httpStatus || "")}</span><span>czas: ${escapeTranscodeHtml(validation.responseTimeMs ?? "-")} ms</span><span>range: ${validation.acceptsRanges === undefined ? "-" : validation.acceptsRanges ? "tak" : "nie"}</span></div>${stream.description ? `<p class="reject-reason"><strong>Opis:</strong> ${escapeTranscodeHtml(stream.description)}</p>` : ""}${metadata.rawText ? `<p class="reject-reason"><strong>Tekst analizowany:</strong> ${escapeTranscodeHtml(metadata.rawText)}</p>` : ""}<div class="reject-reason"><strong>Decyzja:</strong> ${escapeTranscodeHtml(reason)}</div>${url ? `<div class="reject-reason"><strong>URL:</strong> <code>${escapeTranscodeHtml(url.slice(0, 500))}</code></div>` : ""}${validation.reason ? `<div class="reject-reason"><strong>Walidacja:</strong> ${escapeTranscodeHtml(validation.reason)}</div>` : ""}${scoreReasons.length ? `<div class="reject-reason"><strong>Punkty:</strong> ${escapeTranscodeHtml(scoreReasons.join("; "))}</div>` : ""}${matchedTokens.length ? `<div class="reject-reason"><strong>Tokeny:</strong> ${escapeTranscodeHtml(matchedTokens.join(", "))}</div>` : ""}</article>`;
+}
+
+function getFullHistoryReason(stream) {
+  const validation = stream.validation ?? {};
+  if (validation.status === "working") return "Link działa, ale ranking mógł wybrać lepszy wynik.";
+  if (validation.status === "failed") return `Nie działa: ${validation.reason || "walidacja źródła nie powiodła się."}`;
+  if (validation.status === "unsupported") return `Nieobsługiwany albo pominięty: ${validation.reason || "brak obsługi tego typu streamu."}`;
+  if (validation.status === "pending") return validation.reason || "Nie sprawdzono — limit walidacji albo tryb Szukanie najlepszego zatrzymał dalsze testy.";
+  return "Brak wyniku walidacji.";
+}
+
+function getHistoryStreamKey(stream) {
+  if (!stream) return "";
+  return [stream.addonId || stream.sourceAddon || "", stream.url || stream.externalUrl || stream.infoHash || "", stream.fileIdx ?? "", stream.title || stream.name || ""].join("|");
+}
+
 function showVodToast(message) {
   const el = document.getElementById("toast");
   if (!el) return;
@@ -314,6 +377,7 @@ function showVodToast(message) {
 installLogLevelMemory();
 installLinkValidationSetting();
 installSystemTranscodePanel();
+installHistoryDetailsPatch();
 
 setInterval(() => {
   const form = document.getElementById("settingsForm");
@@ -328,6 +392,7 @@ setInterval(() => {
   installLogLevelMemory();
   installLinkValidationSetting();
   installSystemTranscodePanel();
+  installHistoryDetailsPatch();
   installDiagnosticVodUi();
   if (document.getElementById("systemTranscodePanel")) refreshSystemTranscodePanel();
 }, 1000);
