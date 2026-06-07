@@ -8,7 +8,8 @@ const TRANSCODE_SETTING_FIELDS = [
   "transcodeBitrateMode",
   "transcodeBitrateMinKbps",
   "transcodeBitrateMaxKbps",
-  "linkValidationMode"
+  "linkValidationMode",
+  "preferDebrid"
 ];
 
 const LOG_LEVEL_STORAGE_KEY = "selfhosted-stream-aggregator:log-level-filter";
@@ -24,7 +25,8 @@ window.fetch = async (input, init = {}) => {
       for (const field of TRANSCODE_SETTING_FIELDS) {
         const element = document.getElementById(field);
         if (!element) continue;
-        body[field] = element.type === "number" ? Number(element.value) : element.value;
+        if (field === "preferDebrid") body[field] = element.value !== "false";
+        else body[field] = element.type === "number" ? Number(element.value) : element.value;
       }
       init = { ...init, body: JSON.stringify(body) };
     } catch {
@@ -52,13 +54,15 @@ function fillTranscodeSettings(settings) {
     transcodeBitrateMode: "auto",
     transcodeBitrateMinKbps: 1000,
     transcodeBitrateMaxKbps: 6000,
-    linkValidationMode: "best"
+    linkValidationMode: "best",
+    preferDebrid: true
   };
 
   for (const field of TRANSCODE_SETTING_FIELDS) {
     const element = document.getElementById(field);
     if (!element) continue;
-    element.value = settings[field] ?? defaults[field];
+    const value = settings[field] ?? defaults[field];
+    element.value = field === "preferDebrid" ? String(value !== false) : value;
   }
 }
 
@@ -70,6 +74,21 @@ function installLinkValidationSetting() {
   const label = document.createElement("label");
   label.innerHTML = `Walidacja linków<select id="linkValidationMode"><option value="best">Szukanie najlepszego</option><option value="all">Wszystkie</option><option value="5">5 najlepszych</option><option value="10">10 najlepszych</option><option value="20">20 najlepszych</option><option value="40">40 najlepszych</option><option value="80">80 najlepszych</option><option value="100">100 najlepszych</option><option value="150">150 najlepszych</option><option value="200">200 najlepszych</option></select>`;
   timeout.closest("label")?.insertAdjacentElement("afterend", label);
+
+  originalFetch("/admin/settings")
+    .then((response) => response.json())
+    .then((data) => fillTranscodeSettings(data.settings ?? {}))
+    .catch(() => {});
+}
+
+function installPreferDebridSetting() {
+  const form = document.getElementById("settingsForm");
+  const audio = document.getElementById("preferredAudioLanguage");
+  if (!form || !audio || document.getElementById("preferDebrid")) return;
+
+  const label = document.createElement("label");
+  label.innerHTML = `Preferuj debrid<select id="preferDebrid"><option value="true">Tak</option><option value="false">Nie</option></select>`;
+  audio.closest("label")?.insertAdjacentElement("afterend", label);
 
   originalFetch("/admin/settings")
     .then((response) => response.json())
@@ -379,6 +398,7 @@ function showVodToast(message) {
 }
 
 installLogLevelMemory();
+installPreferDebridSetting();
 installLinkValidationSetting();
 installSystemTranscodePanel();
 installHistoryDetailsPatch();
@@ -394,6 +414,7 @@ setInterval(() => {
   }
 
   installLogLevelMemory();
+  installPreferDebridSetting();
   installLinkValidationSetting();
   installSystemTranscodePanel();
   installHistoryDetailsPatch();
