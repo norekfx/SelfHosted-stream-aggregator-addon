@@ -69,7 +69,8 @@ export async function aggregateStreams(
   );
 
   const streams = rawStreams.map(({ addon, stream }) => mapExternalStream(addon, stream));
-  await validateStreamsByMode(streams, rankingPreferences, getEffectiveLinkValidationMode(), getEffectiveStreamValidationTimeoutMs());
+  const validationMode = settings.detectDebridPlaceholders ? settings.debridPlaceholderValidationMode : getEffectiveLinkValidationMode();
+  await validateStreamsByMode(streams, rankingPreferences, validationMode, getEffectiveStreamValidationTimeoutMs());
 
   const rankedStreams = rankWorkingStreams(streams, rankingPreferences);
   const selectedOriginal = selectBestOriginalStream(streams, rankingPreferences);
