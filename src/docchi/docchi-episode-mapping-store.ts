@@ -46,6 +46,12 @@ export function getDocchiEpisodeMapping(originalId: string): PersistedDocchiEpis
   }
 }
 
+export function getDocchiEpisodeMappingByMappedId(mappedId: string): PersistedDocchiEpisodeMapping | undefined {
+  const parsed = parseSeriesId(mappedId);
+  if (!parsed) return undefined;
+  return listDocchiEpisodeMappingsForSeries(parsed.seriesId).find((mapping) => mapping.mappedId === mappedId);
+}
+
 export function listDocchiEpisodeMappingsForSeries(seriesId: string): PersistedDocchiEpisodeMapping[] {
   const rows = getDatabase()
     .prepare("SELECT value FROM app_settings WHERE key LIKE ?")
@@ -62,6 +68,11 @@ export function listDocchiEpisodeMappingsForSeries(seriesId: string): PersistedD
 
 function createMappingKey(originalId: string): string {
   return `${KEY_PREFIX}${originalId}`;
+}
+
+function parseSeriesId(id: string): { seriesId: string } | undefined {
+  const match = id.match(/^(tt\d+):\d+:\d+$/i);
+  return match ? { seriesId: match[1] ?? "" } : undefined;
 }
 
 function invalidateMetadataCaches(seriesId: string): void {
