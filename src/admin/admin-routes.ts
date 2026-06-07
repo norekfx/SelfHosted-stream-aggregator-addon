@@ -71,7 +71,7 @@ const settingsSchema = z.object({
   tmdbReadAccessToken: z.string().optional(),
   tmdbLanguage: z.string().optional(),
   tmdbRegion: z.string().optional(),
-  metadataSyncIntervalMinutes: z.coerce.number().pipe(z.union(METADATA_SYNC_INTERVALS.map((value) => z.literal(value)) as [z.ZodLiteral<0>, z.ZodLiteral<10>, z.ZodLiteral<30>, z.ZodLiteral<60>, z.ZodLiteral<120>, z.ZodLiteral<240>, z.ZodLiteral<480>, z.ZodLiteral<720>, z.ZodLiteral<1440>] })).optional(),
+  metadataSyncIntervalMinutes: z.coerce.number().refine((value) => (METADATA_SYNC_INTERVALS as readonly number[]).includes(value), { message: "Invalid metadata sync interval." }).optional(),
   autoTranscodeMinQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   autoTranscodeMaxQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   transcodePreset: z.enum(TRANSCODE_PRESETS).optional(),
