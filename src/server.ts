@@ -38,6 +38,7 @@ app.get("/app.js", async (_, reply) => {
     readFile(join(publicDir, "app.js"), "utf-8"),
     readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => "")
   ]);
+  reply.header("cache-control", "no-store, max-age=0");
   reply.type("application/javascript; charset=utf-8");
   return `${mainScript}\n\n${addonDeleteHelper}`;
 });
