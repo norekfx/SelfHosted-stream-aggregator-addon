@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -29,6 +30,14 @@ const app = Fastify({
 });
 
 await app.register(cors, { origin: true });
+app.get("/app.js", async (_, reply) => {
+  const [mainScript, addonDeleteHelper] = await Promise.all([
+    readFile(join(publicDir, "app.js"), "utf-8"),
+    readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => "")
+  ]);
+  reply.type("application/javascript; charset=utf-8");
+  return `${mainScript}\n\n${addonDeleteHelper}`;
+});
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
 await app.register(async (adminApp) => {
