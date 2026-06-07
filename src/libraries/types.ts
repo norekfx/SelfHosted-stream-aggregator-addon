@@ -1,6 +1,7 @@
 export type LibraryMediaType = "movie" | "series";
 export type LibrarySource = "tmdb";
 export type LibraryMode = "discover" | "trending" | "popular" | "top_rated" | "now_playing" | "upcoming" | "airing_today" | "on_the_air";
+export type DocchiLibraryMappingMode = "inherit" | "disabled" | "animation_series" | "series" | "all";
 
 export type LibraryConfig = {
   language?: string;
@@ -19,6 +20,7 @@ export type LibraryConfig = {
   voteAverageGte?: number;
   voteCountGte?: number;
   itemLimit?: number;
+  docchiPublicMappingMode?: DocchiLibraryMappingMode;
   includeAdult?: boolean;
   timeWindow?: "day" | "week";
 };
