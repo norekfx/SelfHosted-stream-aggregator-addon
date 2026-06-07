@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
+import { deleteAddon, getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 import { getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
@@ -198,6 +198,15 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const addon = setAddonEnabled(id, body.data.enabled);
     if (!addon) { reply.code(404); return { error: "Addon not found." }; }
     return { addon };
+  });
+
+  app.delete("/admin/addons/:id", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const result = deleteAddon(id);
+    if (result.status === "not_found") { reply.code(404); return { error: "Addon not found." }; }
+    if (result.status === "enabled") { reply.code(409); return { error: "Disable addon before deleting it.", addon: result.addon }; }
+    writeSystemLog("info", "addons", "Addon deleted.", { id: result.addon.id, name: result.addon.name, manifestUrl: result.addon.manifestUrl });
+    return { ok: true, addon: result.addon };
   });
 }
 
