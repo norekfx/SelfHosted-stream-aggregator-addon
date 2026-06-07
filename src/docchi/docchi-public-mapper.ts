@@ -62,19 +62,20 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
   if (!docchiAddons.length) return [];
 
   const result = await findDocchiEpisodeFix(id, { addons: docchiAddons, force: false });
-  if (!result.fixed || !result.docchiId) return [];
+  const docchiId = result.docchiId;
+  if (!result.fixed || !docchiId) return [];
 
   writeSystemLog("info", "docchi", "Docchi fixed episode index for stream aggregation.", {
     originalId: result.originalId,
     mappedId: result.mappedId,
     mappedSeason: result.mappedSeason,
     mappedEpisode: result.mappedEpisode,
-    docchiId: result.docchiId,
+    docchiId,
     matchMethod: result.matchMethod,
     confidence: result.confidence
   });
 
-  return Promise.all(docchiAddons.map((addon) => fetchAddonStreamsWithLog(addon, "anime", result.docchiId, "planned-fixed-stream-fetch")));
+  return Promise.all(docchiAddons.map((addon) => fetchAddonStreamsWithLog(addon, "anime", docchiId, "planned-fixed-stream-fetch")));
 }
 
 export async function findDocchiEpisodeFix(originalId: string, options: { addons?: RegisteredAddon[]; force?: boolean } = {}): Promise<DocchiEpisodeFix> {
@@ -265,6 +266,7 @@ function buildPlanRows(anime: DocchiResolvedAnime[]): DocchiPlanRow[] {
   let lastDate: Date | undefined;
   for (let index = 0; index < deduped.length; index += 1) {
     const row = deduped[index];
+    if (!row) continue;
     const date = parseDate(row.released);
     if (lastDate && date) {
       const gapDays = Math.floor((date.getTime() - lastDate.getTime()) / 86_400_000);
@@ -338,7 +340,11 @@ function dedupePlanRows(rows: DocchiPlanRow[]): DocchiPlanRow[] {
 function summarizePlanSeasons(rows: DocchiPlanRow[]): Array<{ season: number; episodes: number; firstDate?: string; lastDate?: string }> {
   const grouped = new Map<number, DocchiPlanRow[]>();
   for (const row of rows) grouped.set(row.season, [...(grouped.get(row.season) ?? []), row]);
-  return Array.from(grouped.entries()).map(([season, items]) => ({ season, episodes: items.length, firstDate: items[0]?.released, lastDate: items[items.length - 1]?.released }));
+  return Array.from(grouped.entries()).map(([season, items]) => {
+    const first = items[0];
+    const last = items[items.length - 1];
+    return { season, episodes: items.length, firstDate: first?.released, lastDate: last?.released };
+  });
 }
 
 function compareRowsByDateOrIndex(a: DocchiPlanRow, b: DocchiPlanRow): number {
