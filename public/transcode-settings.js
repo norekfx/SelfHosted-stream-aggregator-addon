@@ -9,9 +9,15 @@ const TRANSCODE_SETTING_FIELDS = [
   "transcodeBitrateMinKbps",
   "transcodeBitrateMaxKbps",
   "linkValidationMode",
-  "preferDebrid"
+  "preferDebrid",
+  "detectDebridPlaceholders",
+  "debridPlaceholderMinSizeMb",
+  "debridPlaceholderMinDurationMinutes",
+  "debridPlaceholderCompareDeclaredSize",
+  "debridPlaceholderSizeDifferenceGb"
 ];
 
+const BOOLEAN_SETTING_FIELDS = new Set(["preferDebrid", "detectDebridPlaceholders", "debridPlaceholderCompareDeclaredSize"]);
 const LOG_LEVEL_STORAGE_KEY = "selfhosted-stream-aggregator:log-level-filter";
 const originalFetch = window.fetch.bind(window);
 
@@ -25,7 +31,7 @@ window.fetch = async (input, init = {}) => {
       for (const field of TRANSCODE_SETTING_FIELDS) {
         const element = document.getElementById(field);
         if (!element) continue;
-        if (field === "preferDebrid") body[field] = element.value !== "false";
+        if (BOOLEAN_SETTING_FIELDS.has(field)) body[field] = element.value !== "false";
         else body[field] = element.type === "number" ? Number(element.value) : element.value;
       }
       init = { ...init, body: JSON.stringify(body) };
@@ -55,15 +61,22 @@ function fillTranscodeSettings(settings) {
     transcodeBitrateMinKbps: 1000,
     transcodeBitrateMaxKbps: 6000,
     linkValidationMode: "best",
-    preferDebrid: true
+    preferDebrid: true,
+    detectDebridPlaceholders: false,
+    debridPlaceholderMinSizeMb: 30,
+    debridPlaceholderMinDurationMinutes: 5,
+    debridPlaceholderCompareDeclaredSize: false,
+    debridPlaceholderSizeDifferenceGb: 5
   };
 
   for (const field of TRANSCODE_SETTING_FIELDS) {
     const element = document.getElementById(field);
     if (!element) continue;
     const value = settings[field] ?? defaults[field];
-    element.value = field === "preferDebrid" ? String(value !== false) : value;
+    element.value = BOOLEAN_SETTING_FIELDS.has(field) ? String(value === true) : value;
   }
+
+  updateDebridPlaceholderVisibility();
 }
 
 function installLinkValidationSetting() {
@@ -86,14 +99,36 @@ function installPreferDebridSetting() {
   const audio = document.getElementById("preferredAudioLanguage");
   if (!form || !audio || document.getElementById("preferDebrid")) return;
 
-  const label = document.createElement("label");
-  label.innerHTML = `Preferuj debrid<select id="preferDebrid"><option value="true">Tak</option><option value="false">Nie</option></select>`;
-  audio.closest("label")?.insertAdjacentElement("afterend", label);
+  const wrapper = document.createElement("div");
+  wrapper.id = "debridSettingsPatch";
+  wrapper.innerHTML = `
+    <label>Preferuj debrid<select id="preferDebrid"><option value="true">Tak</option><option value="false">Nie</option></select></label>
+    <label>Wykrywanie placeholderów debrid<select id="detectDebridPlaceholders"><option value="false">Nie</option><option value="true">Tak</option></select></label>
+    <div id="debridPlaceholderOptions">
+      <label>Minimalny rozmiar pliku MB<input id="debridPlaceholderMinSizeMb" type="number" min="1" max="102400" step="1" value="30"></label>
+      <label>Minimalny czas filmu min<input id="debridPlaceholderMinDurationMinutes" type="number" min="1" max="1440" step="1" value="5"></label>
+      <label>Uwzględnij wielkość względem podanej<select id="debridPlaceholderCompareDeclaredSize"><option value="false">Nie</option><option value="true">Tak</option></select></label>
+      <label id="debridPlaceholderSizeDifferenceLabel">Różnica GB<input id="debridPlaceholderSizeDifferenceGb" type="number" min="1" max="1024" step="1" value="5"></label>
+    </div>
+  `;
+  audio.closest("label")?.insertAdjacentElement("afterend", wrapper);
+
+  document.getElementById("detectDebridPlaceholders")?.addEventListener("change", updateDebridPlaceholderVisibility);
+  document.getElementById("debridPlaceholderCompareDeclaredSize")?.addEventListener("change", updateDebridPlaceholderVisibility);
 
   originalFetch("/admin/settings")
     .then((response) => response.json())
     .then((data) => fillTranscodeSettings(data.settings ?? {}))
     .catch(() => {});
+}
+
+function updateDebridPlaceholderVisibility() {
+  const options = document.getElementById("debridPlaceholderOptions");
+  const difference = document.getElementById("debridPlaceholderSizeDifferenceLabel");
+  const enabled = document.getElementById("detectDebridPlaceholders")?.value === "true";
+  const compare = document.getElementById("debridPlaceholderCompareDeclaredSize")?.value === "true";
+  if (options) options.style.display = enabled ? "contents" : "none";
+  if (difference) difference.style.display = enabled && compare ? "" : "none";
 }
 
 function installLogLevelMemory() {
@@ -458,5 +493,6 @@ setInterval(() => {
   installSystemTranscodePanel();
   installHistoryDetailsPatch();
   installDiagnosticVodUi();
+  updateDebridPlaceholderVisibility();
   if (document.getElementById("systemTranscodePanel")) refreshSystemTranscodePanel();
 }, 1000);
