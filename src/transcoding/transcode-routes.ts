@@ -7,6 +7,7 @@ import type { BufferPreset } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import { writeSystemLog } from "../system/system-log.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
+import { listVodTranscodeSessions } from "./transcode-vod-routes.js";
 import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession, listTranscodeSessions, stopTranscodeSession } from "./transcode-session.js";
 
 const playlistParamsSchema = z.object({
@@ -21,7 +22,7 @@ const segmentParamsSchema = playlistParamsSchema.extend({
 const stopParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 export async function registerTranscodeRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/transcode/sessions", async () => ({ sessions: listTranscodeSessions() }));
+  app.get("/transcode/sessions", async () => ({ sessions: [...listTranscodeSessions().map((session) => ({ ...session, mode: "live" })), ...listVodTranscodeSessions()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50) }));
 
   app.post<{ Params: { sessionId: string } }>("/transcode/sessions/:sessionId/stop", async (request, reply) => {
     const params = stopParamsSchema.safeParse(request.params);
