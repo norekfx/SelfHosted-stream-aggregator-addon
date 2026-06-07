@@ -4,6 +4,7 @@ import { env } from "../config/env.js";
 
 export type LinkValidationMode = "best" | "all" | "5" | "10" | "20" | "40" | "80" | "100" | "150" | "200";
 export type MetadataSyncIntervalMinutes = 0 | 10 | 30 | 60 | 120 | 240 | 480 | 720 | 1440;
+export type DocchiPublicMappingMode = "disabled" | "animation_series" | "series" | "all";
 
 export type AppSettings = {
   preferredAudioLanguage: string;
@@ -27,6 +28,7 @@ export type AppSettings = {
   tmdbLanguage: string;
   tmdbRegion: string;
   metadataSyncIntervalMinutes: number;
+  docchiPublicMappingMode: DocchiPublicMappingMode;
   autoTranscodeMinQuality: string;
   autoTranscodeMaxQuality: string;
   transcodePreset: string;
@@ -43,6 +45,7 @@ export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", 
 export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
 export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80", "100", "150", "200"] as const;
 export const METADATA_SYNC_INTERVALS = [0, 10, 30, 60, 120, 240, 480, 720, 1440] as const;
+export const DOCCHI_PUBLIC_MAPPING_MODES = ["disabled", "animation_series", "series", "all"] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
@@ -66,6 +69,7 @@ const defaults: AppSettings = {
   tmdbLanguage: "pl-PL",
   tmdbRegion: "PL",
   metadataSyncIntervalMinutes: 1440,
+  docchiPublicMappingMode: "disabled",
   autoTranscodeMinQuality: "144p",
   autoTranscodeMaxQuality: "1080p",
   transcodePreset: "veryfast",
@@ -189,6 +193,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.tmdbLanguage = normalized.tmdbLanguage?.trim() || defaults.tmdbLanguage;
   normalized.tmdbRegion = normalized.tmdbRegion?.trim().toUpperCase() || defaults.tmdbRegion;
   normalized.metadataSyncIntervalMinutes = normalizeSyncInterval(normalized.metadataSyncIntervalMinutes);
+  normalized.docchiPublicMappingMode = DOCCHI_PUBLIC_MAPPING_MODES.includes(normalized.docchiPublicMappingMode as DocchiPublicMappingMode) ? normalized.docchiPublicMappingMode : defaults.docchiPublicMappingMode;
   normalized.debridPlaceholderMinSizeMb = clampNumber(normalized.debridPlaceholderMinSizeMb, 1, 102400, defaults.debridPlaceholderMinSizeMb);
   normalized.debridPlaceholderMinDurationMinutes = clampNumber(normalized.debridPlaceholderMinDurationMinutes, 1, 1440, defaults.debridPlaceholderMinDurationMinutes);
   normalized.debridPlaceholderSizeDifferenceGb = clampNumber(normalized.debridPlaceholderSizeDifferenceGb, 1, 1024, defaults.debridPlaceholderSizeDifferenceGb);
