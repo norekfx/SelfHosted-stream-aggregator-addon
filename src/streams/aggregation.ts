@@ -132,7 +132,14 @@ async function validateStreamsByMode(streams: RawAggregatedStream[], preferences
     }
 
     stream.validation = await validateStream(
-      { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
+      {
+        url: stream.url,
+        externalUrl: stream.externalUrl,
+        infoHash: stream.infoHash,
+        rawText: stream.metadata.rawText,
+        declaredSize: stream.metadata.size,
+        isDebrid: hasDebridHint(`${stream.name ?? ""} ${stream.title ?? ""} ${stream.description ?? ""} ${String(stream.behaviorHints?.filename ?? "")}`)
+      },
       timeoutMs
     );
 
@@ -153,4 +160,8 @@ function getTargetWorkingCount(mode: LinkValidationMode): number | undefined {
   if (mode === "all" || mode === "best") return undefined;
   const parsed = Number.parseInt(mode, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function hasDebridHint(value: string): boolean {
+  return /\[(?:RD\s*(?:⚡|\+)?|PM\+?|AD\+?)\]|\b(?:real[-\s]?debrid|alldebrid|all[-\s]?debrid|premiumize|debrid)\b/i.test(value);
 }
