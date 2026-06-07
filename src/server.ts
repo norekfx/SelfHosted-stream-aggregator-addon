@@ -10,14 +10,14 @@ import { registerAuthRoutes, requireAdminAuth } from "./auth/auth-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
-import { getCachedLibraryItems, saveLibraryItems } from "./libraries/library-cache.js";
+import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shouldBypassMetadataCache } from "./libraries/library-cache.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { getAddonManifest } from "./stremio/manifest.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
-import { fetchTmdbCatalog } from "./tmdb/tmdb-client.js";
+import { fetchTmdbCatalog, fetchTmdbMeta } from "./tmdb/tmdb-client.js";
 import { registerTranscodeRoutes } from "./transcoding/transcode-routes.js";
 import { registerTranscodeVodRoutes } from "./transcoding/transcode-vod-routes.js";
 
@@ -60,6 +60,28 @@ app.get<{ Params: { type: "movie" | "series"; id: string } }>("/catalog/:type/:i
 
 app.get<{ Params: { type: "movie" | "series"; id: string; extra: string } }>("/catalog/:type/:id/:extra.json", async (request, reply) => {
   return handleCatalogRequest(request.params, reply);
+});
+
+app.get<{ Params: { type: "movie" | "series"; id: string } }>("/meta/:type/:id.json", async (request, reply) => {
+  const params = z.object({
+    type: z.enum(["movie", "series"]),
+    id: z.string().regex(/^tt\d+/i)
+  }).safeParse(request.params);
+
+  if (!params.success) {
+    reply.code(400);
+    return { meta: null };
+  }
+
+  if (!shouldBypassMetadataCache()) {
+    const cached = getCachedMeta(params.data.type, params.data.id);
+    if (cached) return { meta: cached };
+  }
+
+  const meta = await fetchTmdbMeta(params.data.type, params.data.id);
+  if (!meta) return { meta: null };
+  if (!shouldBypassMetadataCache()) saveMeta(params.data.type, params.data.id, meta);
+  return { meta };
 });
 
 app.get<{
@@ -111,13 +133,13 @@ async function handleCatalogRequest(rawParams: unknown, reply: { code: (statusCo
   }
 
   const page = parseCatalogPage(params.data.extra);
-  const cached = getCachedLibraryItems(library.id, page);
+  const cached = shouldBypassMetadataCache() ? undefined : getCachedLibraryItems(library.id, page);
   if (cached) {
     return { metas: cached };
   }
 
   const metas = await fetchTmdbCatalog(library, page);
-  saveLibraryItems(library.id, page, metas);
+  if (!shouldBypassMetadataCache()) saveLibraryItems(library.id, page, metas);
   return { metas };
 }
 
