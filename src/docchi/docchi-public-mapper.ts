@@ -9,6 +9,7 @@ export type DocchiEpisodeFix = {
   originalId: string;
   mappedId: string;
   fixed: boolean;
+  forced?: boolean;
   triedIds: string[];
   addonName?: string;
   streamCount: number;
@@ -32,7 +33,7 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
   const docchiAddons = getEnabledDocchiAddons();
   if (!docchiAddons.length) return [];
 
-  const result = await findDocchiEpisodeFix(id, docchiAddons);
+  const result = await findDocchiEpisodeFix(id, { addons: docchiAddons });
   if (!result.fixed || result.mappedId === id) return [];
 
   writeSystemLog("info", "docchi", "Docchi fixed episode index for stream aggregation.", {
@@ -45,31 +46,42 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
   return Promise.all(docchiAddons.map((addon) => fetchAddonStreamsWithLog(addon, type, result.mappedId, "fixed-stream-fetch")));
 }
 
-export async function findDocchiEpisodeFix(originalId: string, addons = getEnabledDocchiAddons()): Promise<DocchiEpisodeFix> {
+export async function findDocchiEpisodeFix(originalId: string, options: { addons?: RegisteredAddon[]; force?: boolean } = {}): Promise<DocchiEpisodeFix> {
+  const forced = options.force === true;
   const cached = cache.get(originalId);
-  if (cached) return cached;
+  if (cached && !forced) return cached;
 
+  const addons = options.addons ?? getEnabledDocchiAddons();
   const parsed = parseEpisodeId(originalId);
-  const fallback: DocchiEpisodeFix = { originalId, mappedId: originalId, fixed: false, triedIds: [], streamCount: 0 };
-  if (!parsed || !addons.length || !isDocchiMappingGloballyEnabled()) return fallback;
+  const fallback: DocchiEpisodeFix = { originalId, mappedId: originalId, fixed: false, forced, triedIds: [], streamCount: 0 };
+  if (!parsed || !addons.length || (!forced && !isDocchiMappingGloballyEnabled())) return fallback;
 
-  const candidates = generateCandidateIds(parsed.seriesId, parsed.season, parsed.episode);
+  const candidates = generateCandidateIds(parsed.seriesId, parsed.season, parsed.episode, forced);
   const triedIds: string[] = [];
+
+  writeSystemLog("info", "docchi", forced ? "Docchi force mapping started." : "Docchi mapping probe started.", {
+    originalId,
+    candidateCount: candidates.length,
+    addonCount: addons.length,
+    forced
+  });
 
   for (const candidateId of candidates) {
     triedIds.push(candidateId);
     for (const addon of addons) {
-      const response = await fetchAddonStreamsWithLog(addon, "series", candidateId, "mapping-probe");
+      const response = await fetchAddonStreamsWithLog(addon, "series", candidateId, forced ? "force-mapping-probe" : "mapping-probe");
       if (response.status === "fulfilled" && response.streams.length > 0) {
         const fix: DocchiEpisodeFix = {
           originalId,
           mappedId: candidateId,
           fixed: candidateId !== originalId,
+          forced,
           triedIds,
           addonName: addon.name,
           streamCount: response.streams.length
         };
         cache.set(originalId, fix);
+        writeSystemLog("info", "docchi", forced ? "Docchi force mapping found streams." : "Docchi mapping found streams.", fix);
         return fix;
       }
     }
@@ -77,7 +89,30 @@ export async function findDocchiEpisodeFix(originalId: string, addons = getEnabl
 
   const miss = { ...fallback, triedIds };
   cache.set(originalId, miss);
+  writeSystemLog("warn", "docchi", forced ? "Docchi force mapping did not find streams." : "Docchi mapping did not find streams.", miss);
   return miss;
+}
+
+export async function forceDocchiEpisodeFixes(ids: string[]): Promise<DocchiEpisodeFix[]> {
+  const addons = getEnabledDocchiAddons();
+  const uniqueIds = Array.from(new Set(ids.filter((id) => /^tt\d+:\d+:\d+$/i.test(id)))).slice(0, 120);
+  writeSystemLog("info", "docchi", "Docchi force scan requested from WebUI.", {
+    requestedIds: ids.length,
+    uniqueIds: uniqueIds.length,
+    addonCount: addons.length
+  });
+
+  const fixes: DocchiEpisodeFix[] = [];
+  for (const id of uniqueIds) {
+    fixes.push(await findDocchiEpisodeFix(id, { addons, force: true }));
+  }
+
+  writeSystemLog("info", "docchi", "Docchi force scan finished.", {
+    checked: fixes.length,
+    fixed: fixes.filter((fix) => fix.fixed).length,
+    ids: fixes.map((fix) => ({ originalId: fix.originalId, mappedId: fix.mappedId, fixed: fix.fixed, streamCount: fix.streamCount }))
+  });
+  return fixes;
 }
 
 async function fetchAddonStreamsWithLog(addon: RegisteredAddon, type: StreamType, id: string, phase: string): Promise<AddonStreamFetchResult> {
@@ -119,18 +154,16 @@ function parseEpisodeId(id: string): { seriesId: string; season: number; episode
   return { seriesId: match[1] ?? "", season, episode };
 }
 
-function generateCandidateIds(seriesId: string, season: number, episode: number): string[] {
+function generateCandidateIds(seriesId: string, season: number, episode: number, forced = false): string[] {
   const candidates = new Set<string>();
   candidates.add(`${seriesId}:${season}:${episode}`);
 
-  // Najbardziej podejrzany przypadek: TMDB trzyma anime jako jeden bardzo długi sezon.
-  // Generujemy ograniczone, popularne warianty cour/sezonów i pozwalamy Docchi potwierdzić streamami.
-  if (season === 1 && episode > 24) {
+  if (season === 1 && episode > 1) {
     const patterns = [
-      [12, 12, 12, 12, 12, 12, 12, 12],
-      [13, 13, 13, 13, 13, 13, 13, 13],
-      [24, 24, 24, 24, 24, 24],
-      [25, 25, 25, 25, 25, 25],
+      [12, 12, 12, 12, 12, 12, 12, 12, 12, 12],
+      [13, 13, 13, 13, 13, 13, 13, 13, 13, 13],
+      [24, 24, 24, 24, 24, 24, 24],
+      [25, 25, 25, 25, 25, 25, 25],
       [24, 23, 7, 13, 13, 13, 13],
       [24, 24, 13, 13, 13, 13],
       [25, 13, 13, 13, 13, 13]
@@ -141,7 +174,19 @@ function generateCandidateIds(seriesId: string, season: number, episode: number)
     }
   }
 
-  return Array.from(candidates).slice(0, 12);
+  if (forced) {
+    const maxSeason = Math.min(12, Math.max(2, Math.ceil(episode / 10)));
+    for (let candidateSeason = 1; candidateSeason <= maxSeason; candidateSeason += 1) {
+      for (const seasonLength of [10, 11, 12, 13, 24, 25, 26]) {
+        const candidateEpisode = episode - ((candidateSeason - 1) * seasonLength);
+        if (candidateEpisode > 0 && candidateEpisode <= Math.max(26, seasonLength)) {
+          candidates.add(`${seriesId}:${candidateSeason}:${candidateEpisode}`);
+        }
+      }
+    }
+  }
+
+  return Array.from(candidates).slice(0, forced ? 60 : 12);
 }
 
 function remapAbsoluteEpisode(absoluteEpisode: number, seasonLengths: number[]): { season: number; episode: number } | undefined {
