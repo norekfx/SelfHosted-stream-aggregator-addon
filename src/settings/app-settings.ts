@@ -21,6 +21,10 @@ export type AppSettings = {
   publicBaseUrl?: string;
   autoRefreshCache: boolean;
   showDiagnosticDetails: boolean;
+  tmdbApiKey?: string;
+  tmdbReadAccessToken?: string;
+  tmdbLanguage: string;
+  tmdbRegion: string;
   autoTranscodeMinQuality: string;
   autoTranscodeMaxQuality: string;
   transcodePreset: string;
@@ -54,6 +58,10 @@ const defaults: AppSettings = {
   publicBaseUrl: env.PUBLIC_BASE_URL,
   autoRefreshCache: true,
   showDiagnosticDetails: true,
+  tmdbApiKey: undefined,
+  tmdbReadAccessToken: undefined,
+  tmdbLanguage: "pl-PL",
+  tmdbRegion: "PL",
   autoTranscodeMinQuality: "144p",
   autoTranscodeMaxQuality: "1080p",
   transcodePreset: "veryfast",
@@ -85,8 +93,8 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "publicBaseUrl" && row.value.trim() === "") {
-      settings.publicBaseUrl = undefined;
+    if ((row.key === "publicBaseUrl" || row.key === "tmdbApiKey" || row.key === "tmdbReadAccessToken") && row.value.trim() === "") {
+      (settings as Record<string, unknown>)[row.key] = undefined;
       continue;
     }
 
@@ -167,6 +175,10 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.preferDebrid = normalized.preferDebrid !== false;
   normalized.detectDebridPlaceholders = normalized.detectDebridPlaceholders === true;
   normalized.debridPlaceholderCompareDeclaredSize = normalized.debridPlaceholderCompareDeclaredSize === true;
+  normalized.tmdbApiKey = normalized.tmdbApiKey?.trim() || undefined;
+  normalized.tmdbReadAccessToken = normalized.tmdbReadAccessToken?.trim() || undefined;
+  normalized.tmdbLanguage = normalized.tmdbLanguage?.trim() || defaults.tmdbLanguage;
+  normalized.tmdbRegion = normalized.tmdbRegion?.trim().toUpperCase() || defaults.tmdbRegion;
   normalized.debridPlaceholderMinSizeMb = clampNumber(normalized.debridPlaceholderMinSizeMb, 1, 102400, defaults.debridPlaceholderMinSizeMb);
   normalized.debridPlaceholderMinDurationMinutes = clampNumber(normalized.debridPlaceholderMinDurationMinutes, 1, 1440, defaults.debridPlaceholderMinDurationMinutes);
   normalized.debridPlaceholderSizeDifferenceGb = clampNumber(normalized.debridPlaceholderSizeDifferenceGb, 1, 1024, defaults.debridPlaceholderSizeDifferenceGb);
