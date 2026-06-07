@@ -19,11 +19,12 @@ export type DocchiEpisodeFix = {
   docchiEpisodeCount?: number;
   mappedSeason?: number;
   mappedEpisode?: number;
+  seasonCandidateIndex?: number;
 };
 
 type DocchiMetaPreview = { id?: string; name?: string; type?: string; releaseInfo?: string };
-type DocchiResolvedAnime = { id: string; name?: string; episodeCount: number; videos: Array<{ id?: string; title?: string; episode?: number }> };
-type InferredEpisode = { season: number; episode: number; absoluteEpisode: number; seasonEpisodeCount?: number };
+type DocchiResolvedAnime = { id: string; name?: string; releaseInfo?: string; year?: number; seasonHint?: number; episodeCount: number; videos: Array<{ id?: string; title?: string; episode?: number }> };
+type InferredEpisode = { season: number; episode: number; absoluteEpisode: number; releaseYear?: number; seasonEpisodeCount?: number };
 
 const cache = new Map<string, DocchiEpisodeFix>();
 const searchCache = new Map<string, DocchiMetaPreview[]>();
@@ -78,25 +79,25 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
   const searchTerms = buildSearchTerms(tmdbMeta?.name ?? parsed.seriesId);
   const triedIds: string[] = [];
 
-  writeSystemLog("info", "docchi", forced ? "Docchi force mapping started." : "Docchi mapping probe started.", {
-    originalId,
-    inferred,
-    searchTerms,
-    addonCount: addons.length,
-    forced
-  });
+  writeSystemLog("info", "docchi", forced ? "Docchi force mapping started." : "Docchi mapping probe started.", { originalId, inferred, searchTerms, addonCount: addons.length, forced });
 
   for (const addon of addons) {
-    const resolved = await resolveDocchiAnime(addon, parsed.seriesId, searchTerms, forced ? 12 : 6);
-    const preferredAnime = chooseAnimeCandidatesForSeason(resolved, inferred.season);
-    for (const anime of preferredAnime) {
+    const resolved = await resolveDocchiAnime(addon, parsed.seriesId, searchTerms, forced ? 12 : 8);
+    const preferredAnime = chooseAnimeCandidatesForSeason(resolved, inferred);
+    for (const candidate of preferredAnime) {
+      const anime = candidate.anime;
       const episodeCandidates = generateEpisodeCandidates(inferred.episode, forced, anime.episodeCount);
       writeSystemLog("info", "docchi", "Docchi candidate anime selected.", {
         originalId,
         animeId: anime.id,
         animeName: anime.name,
+        animeYear: anime.year,
+        seasonHint: anime.seasonHint,
         inferredSeason: inferred.season,
         inferredEpisode: inferred.episode,
+        releaseYear: inferred.releaseYear,
+        candidateIndex: candidate.index,
+        candidateScore: candidate.score,
         episodeCount: anime.episodeCount,
         episodeCandidates
       });
@@ -118,7 +119,8 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
             docchiTitle: anime.name,
             docchiEpisodeCount: anime.episodeCount,
             mappedSeason: inferred.season,
-            mappedEpisode: episode
+            mappedEpisode: episode,
+            seasonCandidateIndex: candidate.index
           };
           cache.set(originalId, fix);
           writeSystemLog("info", "docchi", forced ? "Docchi force mapping found streams." : "Docchi mapping found streams.", fix);
@@ -158,17 +160,18 @@ async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, sear
   for (const preview of previews) {
     const id = normalizeDocchiMetaId(preview.id);
     if (!id) continue;
-    const full = await fetchDocchiMeta(addon, id, preview.name);
+    const full = await fetchDocchiMeta(addon, id, preview.name, preview.releaseInfo);
     if (full && full.episodeCount > 0) resolved.push(full);
   }
 
-  seriesResolutionCache.set(cacheKey, resolved);
+  const sorted = sortResolvedAnime(resolved);
+  seriesResolutionCache.set(cacheKey, sorted);
   writeSystemLog("info", "docchi", "Docchi anime resolution finished.", {
     seriesId,
     searchTerms,
-    resolved: resolved.map((item, index) => ({ index: index + 1, id: item.id, name: item.name, episodeCount: item.episodeCount }))
+    resolved: sorted.map((item, index) => ({ index: index + 1, id: item.id, name: item.name, year: item.year, seasonHint: item.seasonHint, episodeCount: item.episodeCount }))
   });
-  return resolved;
+  return sorted;
 }
 
 async function searchDocchiAnime(addon: RegisteredAddon, searchTerms: string[], limit: number): Promise<DocchiMetaPreview[]> {
@@ -207,7 +210,7 @@ async function fetchDocchiSearch(addon: RegisteredAddon, term: string): Promise<
       search: term,
       responseTimeMs: Date.now() - startedAt,
       metaCount: metas.length,
-      metas: metas.slice(0, 10).map((meta) => ({ id: meta.id, name: meta.name, type: meta.type }))
+      metas: metas.slice(0, 10).map((meta) => ({ id: meta.id, name: meta.name, type: meta.type, releaseInfo: meta.releaseInfo }))
     });
     return metas;
   } catch (error) {
@@ -218,7 +221,7 @@ async function fetchDocchiSearch(addon: RegisteredAddon, term: string): Promise<
   }
 }
 
-async function fetchDocchiMeta(addon: RegisteredAddon, id: string, fallbackName?: string): Promise<DocchiResolvedAnime | null> {
+async function fetchDocchiMeta(addon: RegisteredAddon, id: string, fallbackName?: string, releaseInfo?: string): Promise<DocchiResolvedAnime | null> {
   const cacheKey = `${addon.manifestUrl}|${id}`;
   if (metaCache.has(cacheKey)) return metaCache.get(cacheKey) ?? null;
   const url = buildMetaUrl(addon.manifestUrl, id);
@@ -227,11 +230,13 @@ async function fetchDocchiMeta(addon: RegisteredAddon, id: string, fallbackName?
   try {
     const response = await fetch(url, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(`Docchi meta failed with HTTP ${response.status}.`);
-    const json = await response.json() as { meta?: { id?: string; name?: string; videos?: Array<{ id?: string; title?: string; episode?: number }> } };
+    const json = await response.json() as { meta?: { id?: string; name?: string; releaseInfo?: string; videos?: Array<{ id?: string; title?: string; episode?: number }> } };
     const videos = Array.isArray(json.meta?.videos) ? json.meta.videos : [];
-    const resolved: DocchiResolvedAnime = { id, name: json.meta?.name ?? fallbackName, videos, episodeCount: videos.length };
+    const name = json.meta?.name ?? fallbackName;
+    const mergedReleaseInfo = json.meta?.releaseInfo ?? releaseInfo;
+    const resolved: DocchiResolvedAnime = { id, name, releaseInfo: mergedReleaseInfo, year: extractYear(`${mergedReleaseInfo ?? ""} ${name ?? ""}`), seasonHint: extractSeasonHint(name), videos, episodeCount: videos.length };
     metaCache.set(cacheKey, resolved);
-    writeSystemLog("info", "docchi", "Docchi meta response received.", { addonId: addon.id, addonName: addon.name, id, responseTimeMs: Date.now() - startedAt, name: resolved.name, episodeCount: resolved.episodeCount, sampleVideos: videos.slice(0, 5).map((video) => ({ id: video.id, title: video.title, episode: video.episode })) });
+    writeSystemLog("info", "docchi", "Docchi meta response received.", { addonId: addon.id, addonName: addon.name, id, responseTimeMs: Date.now() - startedAt, name: resolved.name, releaseInfo: resolved.releaseInfo, year: resolved.year, seasonHint: resolved.seasonHint, episodeCount: resolved.episodeCount, sampleVideos: videos.slice(0, 5).map((video) => ({ id: video.id, title: video.title, episode: video.episode })) });
     return resolved;
   } catch (error) {
     metaCache.set(cacheKey, null);
@@ -270,41 +275,66 @@ function buildSearchTerms(title: string): string[] {
   return Array.from(new Set(terms.map((term) => term.trim()).filter((term) => term.length >= 3))).slice(0, 8);
 }
 
-function chooseAnimeCandidatesForSeason(resolved: DocchiResolvedAnime[], season: number): DocchiResolvedAnime[] {
+function chooseAnimeCandidatesForSeason(resolved: DocchiResolvedAnime[], inferred: InferredEpisode): Array<{ anime: DocchiResolvedAnime; index: number; score: number }> {
   if (!resolved.length) return [];
-  const startIndex = Math.max(0, season - 1);
-  return [...resolved.slice(startIndex), ...resolved.slice(0, startIndex)];
+  const scored = resolved.map((anime, index) => {
+    let score = 0;
+    if (anime.seasonHint === inferred.season) score += 500;
+    if (anime.year && inferred.releaseYear && Math.abs(anime.year - inferred.releaseYear) <= 1) score += 300;
+    if (inferred.season === 1 && (anime.seasonHint ?? 1) === 1) score += 120;
+    if (anime.episodeCount >= inferred.episode) score += 80;
+    score -= Math.abs(index + 1 - inferred.season) * 25;
+    return { anime, index: index + 1, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function sortResolvedAnime(items: DocchiResolvedAnime[]): DocchiResolvedAnime[] {
+  return [...items].sort((a, b) => {
+    const seasonDelta = (a.seasonHint ?? 999) - (b.seasonHint ?? 999);
+    if (seasonDelta !== 0) return seasonDelta;
+    const yearDelta = (a.year ?? 9999) - (b.year ?? 9999);
+    if (yearDelta !== 0) return yearDelta;
+    return 0;
+  });
 }
 
 function inferSeasonEpisode(tmdbMeta: { videos?: Array<{ season?: number; episode?: number; released?: string }> } | null | undefined, absoluteEpisode: number): InferredEpisode | undefined {
-  const videos = (tmdbMeta?.videos ?? [])
-    .filter((video) => Number.isFinite(video.episode) && video.episode! > 0)
-    .sort((a, b) => (a.episode ?? 0) - (b.episode ?? 0));
+  const videos = (tmdbMeta?.videos ?? []).filter((video) => Number.isFinite(video.episode) && video.episode! > 0).sort((a, b) => (a.episode ?? 0) - (b.episode ?? 0));
   if (!videos.length) return undefined;
-
   let currentSeason = 1;
   let currentEpisode = 0;
   let lastReleased: Date | undefined;
-  const seasonCounts = new Map<number, number>();
-
   for (const video of videos) {
     const released = video.released ? new Date(video.released) : undefined;
     if (lastReleased && released && Number.isFinite(released.getTime())) {
       const gapDays = Math.floor((released.getTime() - lastReleased.getTime()) / 86_400_000);
       if (gapDays >= 120) {
-        seasonCounts.set(currentSeason, currentEpisode);
         currentSeason += 1;
         currentEpisode = 0;
       }
     }
     currentEpisode += 1;
     if (video.episode === absoluteEpisode) {
-      seasonCounts.set(currentSeason, Math.max(seasonCounts.get(currentSeason) ?? 0, currentEpisode));
-      return { season: currentSeason, episode: currentEpisode, absoluteEpisode, seasonEpisodeCount: seasonCounts.get(currentSeason) };
+      return { season: currentSeason, episode: currentEpisode, absoluteEpisode, releaseYear: released && Number.isFinite(released.getTime()) ? released.getUTCFullYear() : undefined };
     }
     if (released && Number.isFinite(released.getTime())) lastReleased = released;
   }
+  return undefined;
+}
 
+function extractYear(value?: string): number | undefined {
+  const year = value?.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+  return year ? Number.parseInt(year, 10) : undefined;
+}
+
+function extractSeasonHint(name?: string): number | undefined {
+  if (!name) return undefined;
+  const sMatch = name.match(/\bS(?:eason)?\s*(\d+)\b/i) ?? name.match(/\b(?:season|sezon)\s*(\d+)\b/i);
+  if (sMatch?.[1]) return Number.parseInt(sMatch[1], 10);
+  const partMatch = name.match(/\b(?:part|cour)\s*(\d+)\b/i);
+  if (partMatch?.[1]) return Number.parseInt(partMatch[1], 10);
   return undefined;
 }
 
