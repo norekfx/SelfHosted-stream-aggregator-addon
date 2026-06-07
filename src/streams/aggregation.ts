@@ -119,14 +119,15 @@ function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream
 
 async function validateStreamsByMode(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string }, mode: LinkValidationMode, timeoutMs: number): Promise<void> {
   const ordered = rankCandidateStreams(streams, preferences);
-  const limit = getValidationLimit(mode, ordered.length);
+  const targetWorkingCount = getTargetWorkingCount(mode);
+  let workingCount = 0;
 
   for (let index = 0; index < ordered.length; index += 1) {
     const stream = ordered[index];
     if (!stream) continue;
 
-    if (index >= limit) {
-      stream.validation = notChecked("Link was outside the selected validation limit.");
+    if (targetWorkingCount !== undefined && workingCount >= targetWorkingCount) {
+      stream.validation = notChecked(`Skipped because ${targetWorkingCount} working links were already found.`);
       continue;
     }
 
@@ -134,6 +135,10 @@ async function validateStreamsByMode(streams: RawAggregatedStream[], preferences
       { url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash },
       timeoutMs
     );
+
+    if (stream.validation.status === "working") {
+      workingCount += 1;
+    }
 
     if (mode === "best" && stream.validation.status === "working") {
       for (const skipped of ordered.slice(index + 1)) {
@@ -144,9 +149,8 @@ async function validateStreamsByMode(streams: RawAggregatedStream[], preferences
   }
 }
 
-function getValidationLimit(mode: LinkValidationMode, total: number): number {
-  if (mode === "all") return total;
-  if (mode === "best") return total;
+function getTargetWorkingCount(mode: LinkValidationMode): number | undefined {
+  if (mode === "all" || mode === "best") return undefined;
   const parsed = Number.parseInt(mode, 10);
-  return Number.isFinite(parsed) ? Math.min(parsed, total) : total;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
