@@ -1,4 +1,5 @@
 import { getDatabase } from "../db/database.js";
+import type { StremioCatalogMeta } from "../libraries/types.js";
 import { writeSystemLog } from "../system/system-log.js";
 
 export type PersistedDocchiEpisodeMapping = {
@@ -33,6 +34,34 @@ export function saveDocchiEpisodeMapping(mapping: Omit<PersistedDocchiEpisodeMap
   writeSystemLog("info", "docchi", "Persisted Docchi episode mapping.", value);
 }
 
+export function saveDocchiEpisodeMappingFromFix(fix: {
+  originalId: string;
+  mappedId: string;
+  docchiId?: string;
+  docchiTitle?: string;
+  mappedSeason?: number;
+  mappedEpisode?: number;
+  matchMethod?: string;
+  confidence?: number;
+}): void {
+  const source = parseEpisodeId(fix.originalId);
+  const mapped = parseEpisodeId(fix.mappedId);
+  if (!source || !mapped || !fix.docchiId) return;
+  saveDocchiEpisodeMapping({
+    originalId: fix.originalId,
+    seriesId: source.seriesId,
+    sourceSeason: source.season,
+    sourceEpisode: source.episode,
+    mappedId: fix.mappedId,
+    mappedSeason: fix.mappedSeason ?? mapped.season,
+    mappedEpisode: fix.mappedEpisode ?? mapped.episode,
+    docchiId: fix.docchiId,
+    docchiTitle: fix.docchiTitle,
+    matchMethod: fix.matchMethod,
+    confidence: fix.confidence
+  });
+}
+
 export function getDocchiEpisodeMapping(originalId: string): PersistedDocchiEpisodeMapping | undefined {
   const row = getDatabase()
     .prepare("SELECT value FROM app_settings WHERE key = ?")
@@ -47,7 +76,7 @@ export function getDocchiEpisodeMapping(originalId: string): PersistedDocchiEpis
 }
 
 export function getDocchiEpisodeMappingByMappedId(mappedId: string): PersistedDocchiEpisodeMapping | undefined {
-  const parsed = parseSeriesId(mappedId);
+  const parsed = parseEpisodeId(mappedId);
   if (!parsed) return undefined;
   return listDocchiEpisodeMappingsForSeries(parsed.seriesId).find((mapping) => mapping.mappedId === mappedId);
 }
@@ -66,13 +95,35 @@ export function listDocchiEpisodeMappingsForSeries(seriesId: string): PersistedD
   return mappings.sort((a, b) => a.sourceEpisode - b.sourceEpisode);
 }
 
+export function applyPersistedDocchiMappingsToMeta(meta: StremioCatalogMeta): StremioCatalogMeta {
+  if (meta.type !== "series" || !meta.videos?.length) return meta;
+  const mappings = listDocchiEpisodeMappingsForSeries(meta.id);
+  if (!mappings.length) return meta;
+  const byOriginalId = new Map(mappings.map((mapping) => [mapping.originalId, mapping]));
+  const videos = meta.videos.map((video) => {
+    const mapping = byOriginalId.get(video.id);
+    if (!mapping) return video;
+    return {
+      ...video,
+      id: mapping.mappedId,
+      season: mapping.mappedSeason,
+      episode: mapping.mappedEpisode
+    };
+  }).sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0));
+  return { ...meta, videos };
+}
+
 function createMappingKey(originalId: string): string {
   return `${KEY_PREFIX}${originalId}`;
 }
 
-function parseSeriesId(id: string): { seriesId: string } | undefined {
-  const match = id.match(/^(tt\d+):\d+:\d+$/i);
-  return match ? { seriesId: match[1] ?? "" } : undefined;
+function parseEpisodeId(id: string): { seriesId: string; season: number; episode: number } | undefined {
+  const match = id.match(/^(tt\d+):(\d+):(\d+)$/i);
+  if (!match) return undefined;
+  const season = Number.parseInt(match[2] ?? "0", 10);
+  const episode = Number.parseInt(match[3] ?? "0", 10);
+  if (!season || !episode) return undefined;
+  return { seriesId: match[1] ?? "", season, episode };
 }
 
 function invalidateMetadataCaches(seriesId: string): void {
