@@ -10,6 +10,7 @@ import { registerAuthRoutes, requireAdminAuth } from "./auth/auth-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
+import { applyPersistedDocchiMappingsToMeta } from "./docchi/docchi-episode-mapping-store.js";
 import { findDocchiEpisodeFix } from "./docchi/docchi-public-mapper.js";
 import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shouldBypassMetadataCache } from "./libraries/library-cache.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
@@ -92,8 +93,9 @@ app.get<{ Params: { type: "movie" | "series"; id: string } }>("/meta/:type/:id.j
 
   const meta = await fetchTmdbMeta(params.data.type, params.data.id);
   if (!meta) return { meta: null };
-  if (!shouldBypassMetadataCache()) saveMeta(params.data.type, params.data.id, meta);
-  return { meta };
+  const mappedMeta = applyPersistedDocchiMappingsToMeta(meta);
+  if (!shouldBypassMetadataCache()) saveMeta(params.data.type, params.data.id, mappedMeta);
+  return { meta: mappedMeta };
 });
 
 app.get<{
