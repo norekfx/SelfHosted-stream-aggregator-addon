@@ -11,6 +11,7 @@ const TRANSCODE_SETTING_FIELDS = [
   "linkValidationMode",
   "preferDebrid",
   "detectDebridPlaceholders",
+  "debridPlaceholderValidationMode",
   "debridPlaceholderMinSizeMb",
   "debridPlaceholderMinDurationMinutes",
   "debridPlaceholderCompareDeclaredSize",
@@ -63,6 +64,7 @@ function fillTranscodeSettings(settings) {
     linkValidationMode: "best",
     preferDebrid: true,
     detectDebridPlaceholders: false,
+    debridPlaceholderValidationMode: "best",
     debridPlaceholderMinSizeMb: 30,
     debridPlaceholderMinDurationMinutes: 5,
     debridPlaceholderCompareDeclaredSize: false,
@@ -105,6 +107,7 @@ function installPreferDebridSetting() {
     <label>Preferuj debrid<select id="preferDebrid"><option value="true">Tak</option><option value="false">Nie</option></select></label>
     <label>Wykrywanie placeholderów debrid<select id="detectDebridPlaceholders"><option value="false">Nie</option><option value="true">Tak</option></select></label>
     <div id="debridPlaceholderOptions">
+      <label>Walidacja placeholderów<select id="debridPlaceholderValidationMode"><option value="best">Szukanie najlepszego</option><option value="all">Wszystkie</option><option value="5">5 najlepszych</option><option value="10">10 najlepszych</option><option value="20">20 najlepszych</option><option value="40">40 najlepszych</option><option value="80">80 najlepszych</option><option value="100">100 najlepszych</option><option value="150">150 najlepszych</option><option value="200">200 najlepszych</option></select></label>
       <label>Minimalny rozmiar pliku MB<input id="debridPlaceholderMinSizeMb" type="number" min="1" max="102400" step="1" value="30"></label>
       <label>Minimalny czas filmu min<input id="debridPlaceholderMinDurationMinutes" type="number" min="1" max="1440" step="1" value="5"></label>
       <label>Uwzględnij wielkość względem podanej<select id="debridPlaceholderCompareDeclaredSize"><option value="false">Nie</option><option value="true">Tak</option></select></label>
