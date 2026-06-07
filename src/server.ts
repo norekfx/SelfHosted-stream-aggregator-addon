@@ -10,11 +10,14 @@ import { registerAuthRoutes, requireAdminAuth } from "./auth/auth-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
+import { getCachedLibraryItems, saveLibraryItems } from "./libraries/library-cache.js";
+import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
-import { addonManifest } from "./stremio/manifest.js";
+import { getAddonManifest } from "./stremio/manifest.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
+import { fetchTmdbCatalog } from "./tmdb/tmdb-client.js";
 import { registerTranscodeRoutes } from "./transcoding/transcode-routes.js";
 import { registerTranscodeVodRoutes } from "./transcoding/transcode-vod-routes.js";
 
@@ -49,7 +52,37 @@ await app.register(registerTranscodeVodRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
 
-app.get("/manifest.json", async () => addonManifest);
+app.get("/manifest.json", async () => getAddonManifest());
+
+app.get<{
+  Params: { type: "movie" | "series"; id: string; extra?: string };
+}>(["/catalog/:type/:id.json", "/catalog/:type/:id/:extra.json"], async (request, reply) => {
+  const params = z.object({
+    type: z.enum(["movie", "series"]),
+    id: z.string().min(1),
+    extra: z.string().optional()
+  }).safeParse(request.params);
+
+  if (!params.success) {
+    reply.code(400);
+    return { metas: [] };
+  }
+
+  const library = getLibraryForCatalog(params.data.type, params.data.id);
+  if (!library) {
+    return { metas: [] };
+  }
+
+  const page = parseCatalogPage(params.data.extra);
+  const cached = getCachedLibraryItems(library.id, page);
+  if (cached) {
+    return { metas: cached };
+  }
+
+  const metas = await fetchTmdbCatalog(library, page);
+  saveLibraryItems(library.id, page, metas);
+  return { metas };
+});
 
 app.get<{
   Params: { type: "movie" | "series"; id: string };
@@ -81,5 +114,13 @@ app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (re
 
   reply.redirect(original.originalUrl);
 });
+
+function parseCatalogPage(extra?: string): number {
+  if (!extra) return 1;
+  const match = extra.match(/(?:^|&)skip=(\d+)/);
+  const skip = match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+  if (!Number.isFinite(skip) || skip <= 0) return 1;
+  return Math.floor(skip / 30) + 1;
+}
 
 await app.listen({ host: env.HOST, port: env.PORT });
