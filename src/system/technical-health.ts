@@ -143,7 +143,7 @@ function checkFfmpeg(): Promise<TechnicalHealthCheck> {
       resolve({
         name: "FFmpeg",
         status: "error",
-        message: `FFmpeg exited with code ${code}.",
+        message: `FFmpeg exited with code ${code}.`,
         details: { ffmpegPath: env.FFMPEG_PATH }
       });
     });
