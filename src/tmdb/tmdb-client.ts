@@ -158,22 +158,17 @@ async function fetchSeriesVideos(tmdbId: number, imdbId: string, detail: TmdbDet
 
   for (const season of seasons) {
     const seasonDetail = await tmdbRequest<TmdbSeason>(`/tv/${tmdbId}/season/${season.season_number}`, { language: settings.tmdbLanguage }, settings).catch(() => null);
-    const episodes = await Promise.all((seasonDetail?.episodes ?? []).map(async (episode) => {
-      const stremioEpisodeId = `${imdbId}:${season.season_number}:${episode.episode_number}`;
-      const episodeExternalIds = await tmdbRequest<TmdbExternalIds>(`/tv/${tmdbId}/season/${season.season_number}/episode/${episode.episode_number}/external_ids`, {}, settings).catch(() => null);
-      const episodeImdbId = episodeExternalIds?.imdb_id && /^tt\d+$/i.test(episodeExternalIds.imdb_id) ? episodeExternalIds.imdb_id : undefined;
-      const debugId = episodeImdbId ?? stremioEpisodeId;
-      return {
-        id: stremioEpisodeId,
-        title: `${debugId} · ${episode.name || `S${season.season_number}E${episode.episode_number}`}`,
+    for (const episode of seasonDetail?.episodes ?? []) {
+      allVideos.push({
+        id: `${imdbId}:${season.season_number}:${episode.episode_number}`,
+        title: episode.name || `S${season.season_number}E${episode.episode_number}`,
         released: episode.air_date ? new Date(episode.air_date).toISOString() : undefined,
         season: season.season_number,
         episode: episode.episode_number,
         overview: episode.overview || undefined,
         thumbnail: episode.still_path ? `${IMAGE_BASE_URL}/w300${episode.still_path}` : undefined
-      };
-    }));
-    allVideos.push(...episodes);
+      });
+    }
   }
 
   return allVideos;
