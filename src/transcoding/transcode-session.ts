@@ -45,7 +45,8 @@ const sessions = new Map<string, TranscodeSession>();
 
 export function getTranscodeSession(sessionId: string): TranscodeSession | undefined { const session = sessions.get(sessionId); if (session) updateBufferInfo(session); return session; }
 export function listTranscodeSessions(): Array<Omit<TranscodeSession, "process">> { return Array.from(sessions.values()).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50).map((session) => { updateBufferInfo(session); const { process: _process, ...snapshot } = session; return snapshot; }); }
-export function stopTranscodeSession(sessionId: string, reason = "stopped manually"): Omit<TranscodeSession, "process"> | undefined { const session = sessions.get(sessionId); if (!session) return undefined; session.stopReason = reason; session.updatedAt = new Date().toISOString(); if (session.process && (session.status === "running" || session.status === "starting")) { session.process.kill("SIGTERM"); } else if (session.status === "running" || session.status === "starting") { session.status = "exited"; } updateBufferInfo(session); const { process: _process, ...snapshot } = session; writeSystemLog("info", "transcode", "Transcode session stop requested.", { sessionId: session.id, streamId: session.streamId, quality: session.quality, reason }); return snapshot; }
+export function stopTranscodeSession(sessionId: string, reason = "stopped manually"): Omit<TranscodeSession, "process"> | undefined { const session = sessions.get(sessionId); if (!session) return undefined; return stopSession(session, reason); }
+export function stopActiveTranscodeSessions(reason = "another transcode mode requested"): number { const active = Array.from(sessions.values()).filter((session) => session.status === "running" || session.status === "starting"); for (const session of active) stopSession(session, reason); return active.length; }
 
 export function getOrCreateTranscodeSession(original: AggregatedStream, quality: TranscodeQuality, bufferPreset: BufferPreset): TranscodeSession {
   if (!original.originalUrl) throw new Error("Selected original has no originalUrl.");
@@ -60,6 +61,20 @@ export function getOrCreateTranscodeSession(original: AggregatedStream, quality:
   sessions.set(sessionId, session);
   startFfmpeg(session);
   return session;
+}
+
+function stopSession(session: TranscodeSession, reason: string): Omit<TranscodeSession, "process"> {
+  session.stopReason = reason;
+  session.updatedAt = new Date().toISOString();
+  if (session.process && (session.status === "running" || session.status === "starting")) {
+    session.process.kill("SIGTERM");
+  } else if (session.status === "running" || session.status === "starting") {
+    session.status = "exited";
+  }
+  updateBufferInfo(session);
+  const { process: _process, ...snapshot } = session;
+  writeSystemLog("info", "transcode", "Transcode session stop requested.", { sessionId: session.id, streamId: session.streamId, quality: session.quality, reason });
+  return snapshot;
 }
 
 function startFfmpeg(session: TranscodeSession): void {
