@@ -18,6 +18,7 @@ export type LibraryConfig = {
   year?: string;
   voteAverageGte?: number;
   voteCountGte?: number;
+  itemLimit?: number;
   includeAdult?: boolean;
   timeWindow?: "day" | "week";
 };
