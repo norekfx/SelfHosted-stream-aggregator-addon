@@ -80,6 +80,7 @@
             <label>Źródło listy<select id="libraryMode"><option value="discover">Dopasowana biblioteka / Discover</option><option value="trending">Trendy</option><option value="popular">Popularne</option><option value="top_rated">Najwyżej oceniane</option><option value="now_playing">Filmy: teraz w kinach</option><option value="upcoming">Filmy: nadchodzące</option><option value="airing_today">Seriale: dziś emitowane</option><option value="on_the_air">Seriale: obecnie emitowane</option></select></label>
             <label>Preset<select id="libraryPreset"><option value="custom">Własna konfiguracja</option><option value="latest">Najnowsze</option><option value="anime">Anime</option><option value="netflix">Netflix</option><option value="prime">Prime Video</option><option value="disney">Disney+</option><option value="top">Top oceniane</option></select></label>
             <label>Platforma VOD<select id="libraryWatchProvider"><option value="">Dowolna / brak filtra</option></select></label>
+            <label>Liczba pozycji<input id="libraryItemLimit" type="number" min="1" max="100" value="50" placeholder="50" /></label>
             <label>Sortowanie<input id="librarySortBy" placeholder="popularity.desc" /></label>
             <label>Gatunki TMDB<input id="libraryGenres" placeholder="16 dla animacji/anime" /></label>
             <label>Słowa kluczowe TMDB<input id="libraryKeywords" placeholder="np. anime keyword" /></label>
@@ -90,7 +91,7 @@
             <label>Kolejność w Stremio<input id="librarySortOrder" type="number" value="0" /></label>
             <label class="checkbox"><input id="libraryEnabled" type="checkbox" checked /> Włączona w Stremio</label>
           </div>
-          <p class="hint">Najprostsza ścieżka: wybierz preset, typ i platformę VOD. Zaawansowane pola pozwalają tworzyć bardzo dopasowane biblioteki.</p>
+          <p class="hint">Liczba pozycji domyślnie wynosi 50. TMDB zwraca po 20 pozycji na stronę, więc większy limit pobiera kilka stron i może chwilę potrwać.</p>
           <button id="createLibraryBtn" class="primary-btn" type="submit">Dodaj bibliotekę</button>
         </form>
       </article>
@@ -197,6 +198,7 @@
     await runButton(button, 'Tworzę...', async () => {
       const provider = value('#libraryWatchProvider');
       const region = value('#tmdbRegion') || 'PL';
+      const itemLimit = Number(value('#libraryItemLimit') || 50);
       const body = {
         name: value('#libraryName'),
         slug: value('#librarySlug') || undefined,
@@ -215,11 +217,13 @@
           watchRegion: provider ? region : undefined,
           year: value('#libraryYear') || undefined,
           voteCountGte: value('#libraryVoteCount') ? Number(value('#libraryVoteCount')) : undefined,
-          voteAverageGte: value('#libraryVoteAverage') ? Number(value('#libraryVoteAverage')) : undefined
+          voteAverageGte: value('#libraryVoteAverage') ? Number(value('#libraryVoteAverage')) : undefined,
+          itemLimit: Number.isFinite(itemLimit) ? itemLimit : 50
         }
       };
       await apiRequest('/admin/libraries', { method: 'POST', body });
       document.querySelector('#libraryForm')?.reset();
+      setValue('#libraryItemLimit', '50');
       const enabled = document.querySelector('#libraryEnabled');
       if (enabled) enabled.checked = true;
       showToast('Biblioteka dodana.');
