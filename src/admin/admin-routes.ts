@@ -21,6 +21,7 @@ const logsQuerySchema = z.object({ limit: z.coerce.number().int().positive().max
 const settingsSchema = z.object({
   preferredAudioLanguage: z.string().min(2).optional(),
   preferredSubtitleLanguage: z.string().min(2).optional(),
+  preferDebrid: z.boolean().optional(),
   defaultTranscodeBufferPreset: z.string().optional(),
   streamValidationTimeoutMs: z.coerce.number().int().positive().max(120000).optional(),
   linkValidationMode: z.enum(LINK_VALIDATION_MODES).optional(),
@@ -138,6 +139,20 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, deleted };
   });
 
+  app.get<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => {
+    const params = aggregateParamsSchema.safeParse(request.params);
+    if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; }
+    await refreshNow(params.data.type, params.data.id);
+    return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" };
+  });
+
+  app.post<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => {
+    const params = aggregateParamsSchema.safeParse(request.params);
+    if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; }
+    await refreshNow(params.data.type, params.data.id);
+    return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" };
+  });
+
   app.get<{ Querystring: { limit?: string } }>("/admin/history", async (request, reply) => {
     const query = limitQuerySchema.safeParse(request.query);
     if (!query.success) { reply.code(400); return { error: "Invalid history query.", details: query.error.flatten() }; }
@@ -156,63 +171,47 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { details };
   });
 
-  app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/cache/:type/:id", async (request, reply) => {
-    const params = aggregateParamsSchema.safeParse(request.params);
-    if (!params.success) { reply.code(400); return { error: "Invalid cache parameters.", details: params.error.flatten() }; }
-    const cached = getCachedSearchResult(params.data.type, params.data.id);
-    if (!cached) { reply.code(404); return { error: "Cached result not found." }; }
-    return { cached };
-  });
-
-  app.post<{ Params: { type: "movie" | "series"; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => {
-    const params = aggregateParamsSchema.safeParse(request.params);
-    if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; }
-    writeSystemLog("info", "cache", "Manual cache refresh started.", params.data);
-    const selectedOriginal = await refreshNow(params.data.type, params.data.id);
-    writeSystemLog(selectedOriginal ? "info" : "warn", "cache", "Manual cache refresh completed.", { ...params.data, selectedOriginal: selectedOriginal?.title });
-    return { selectedOriginal };
-  });
-
-  app.get<{ Params: { addonId: string } }>("/admin/addons/:addonId", async (request, reply) => {
-    const addon = getAddon(request.params.addonId);
+  app.get("/admin/addons/:id", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const addon = getAddon(id);
     if (!addon) { reply.code(404); return { error: "Addon not found." }; }
     return { addon };
   });
 
-  app.patch<{ Params: { addonId: string } }>("/admin/addons/:addonId", async (request, reply) => {
+  app.post("/admin/addons/:id/check", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const addon = await refreshAddonHealth(id);
+    if (!addon) { reply.code(404); return { error: "Addon not found." }; }
+    return { addon };
+  });
+
+  app.patch("/admin/addons/:id", async (request, reply) => {
     const body = updateAddonSchema.safeParse(request.body);
     if (!body.success) { reply.code(400); return { error: "Invalid addon update payload.", details: body.error.flatten() }; }
-    const addon = setAddonEnabled(request.params.addonId, body.data.enabled);
+    const id = (request.params as { id: string }).id;
+    const addon = setAddonEnabled(id, body.data.enabled);
     if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    writeSystemLog("info", "addons", body.data.enabled ? "Addon enabled." : "Addon disabled.", { id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl });
-    return { addon };
-  });
-
-  app.post<{ Params: { addonId: string } }>("/admin/addons/:addonId/check", async (request, reply) => {
-    const addon = await refreshAddonHealth(request.params.addonId);
-    if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon health-check completed.", { id: addon.id, name: addon.name, status: addon.status, responseTimeMs: addon.responseTimeMs, lastError: addon.lastError });
     return { addon };
   });
 }
 
-function toDiagnosticAggregatedStream(type: StreamType, id: string, stream: any): AggregatedStream {
-  const originalUrl = stream.url ?? stream.externalUrl ?? "";
+function toDiagnosticAggregatedStream(type: StreamType, mediaId: string, stream: any): AggregatedStream {
+  const hash = createHash("sha1").update(JSON.stringify({ type, mediaId, url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash, fileIdx: stream.fileIdx, title: stream.title, addonId: stream.addonId })).digest("hex");
   return {
-    id: createStableOriginalId(stream.addonId, type, id, originalUrl),
-    name: "Original",
-    title: stream.title ?? stream.name ?? "Diagnostic stream",
-    sourceAddon: stream.addonName,
-    originalUrl,
+    id: `${type}:${mediaId}:${hash}`,
+    type,
+    mediaId,
+    title: stream.title ?? stream.name ?? stream.infoHash ?? stream.url ?? "Unknown stream",
+    name: stream.name,
+    description: stream.description,
+    originalUrl: stream.url ?? stream.externalUrl,
+    sourceAddon: stream.addonName ?? stream.addonId,
     quality: stream.metadata?.quality,
     audioLanguage: stream.metadata?.audioLanguage,
     subtitleLanguage: stream.metadata?.subtitleLanguage,
-    isValidated: true,
-    validationStatus: "working",
-    validationReason: Array.isArray(stream.scoreReasons) ? stream.scoreReasons.join("; ") : undefined
+    validationStatus: stream.validation?.status,
+    validationReason: stream.validation?.reason,
+    score: stream.score,
+    scoreReasons: stream.scoreReasons
   };
-}
-
-function createStableOriginalId(addonId: string, type: StreamType, id: string, originalUrl: string): string {
-  return createHash("sha256").update(`${addonId}|${type}|${id}|${originalUrl}`).digest("base64url").slice(0, 32);
 }
