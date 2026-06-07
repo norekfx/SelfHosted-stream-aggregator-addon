@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { env, getDatabasePath, getTranscodeCacheDir } from "../config/env.js";
 import { getDatabase } from "../db/database.js";
 import { getAppSettings } from "../settings/app-settings.js";
-import { addonManifest } from "../stremio/manifest.js";
+import { getAddonManifest } from "../stremio/manifest.js";
 
 export type TechnicalHealthCheck = {
   name: string;
@@ -82,6 +82,7 @@ function checkDataDirectories(): TechnicalHealthCheck {
 }
 
 function checkManifest(): TechnicalHealthCheck {
+  const addonManifest = getAddonManifest();
   const hasStreams = addonManifest.resources.includes("stream") && addonManifest.types.includes("movie") && addonManifest.types.includes("series");
   return {
     name: "Manifest",
@@ -142,7 +143,7 @@ function checkFfmpeg(): Promise<TechnicalHealthCheck> {
       resolve({
         name: "FFmpeg",
         status: "error",
-        message: `FFmpeg exited with code ${code}.`,
+        message: `FFmpeg exited with code ${code}.",
         details: { ffmpegPath: env.FFMPEG_PATH }
       });
     });
