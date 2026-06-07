@@ -45,8 +45,8 @@
     const style = document.createElement('style');
     style.id = 'libraryPreviewStyles';
     style.textContent = `
-      .library-preview-wrap{display:flex;flex-direction:column;gap:22px}.library-preview-row{display:flex;flex-direction:column;gap:10px}.library-preview-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.library-preview-title h3{margin:0}.library-preview-title small{opacity:.75}.library-poster-row{display:flex;gap:14px;overflow-x:auto;padding:6px 2px 16px;scroll-snap-type:x proximity}.library-poster-card{width:138px;min-width:138px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;scroll-snap-align:start}.library-poster-card img,.library-poster-placeholder{width:138px;height:207px;border-radius:14px;object-fit:cover;background:rgba(255,255,255,.08);box-shadow:0 10px 28px rgba(0,0,0,.28)}.library-poster-placeholder{display:flex;align-items:center;justify-content:center;padding:12px;text-align:center}.library-poster-card strong{display:block;margin-top:8px;font-size:13px;line-height:1.25}.library-poster-card small{display:block;opacity:.7;margin-top:3px}.library-detail{margin-top:18px;border:1px solid rgba(255,255,255,.12);border-radius:18px;overflow:hidden;background:rgba(0,0,0,.18)}.library-detail.hidden{display:none}.library-detail-hero{display:grid;grid-template-columns:170px 1fr;gap:22px;padding:22px;background-size:cover;background-position:center;position:relative}.library-detail-hero::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.86),rgba(0,0,0,.55));}.library-detail-hero>*{position:relative}.library-detail-poster{width:170px;border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.4)}.library-detail-body{padding:18px 22px}.library-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.library-detail-box{padding:12px;border-radius:12px;background:rgba(255,255,255,.06)}.library-detail-box span{display:block;opacity:.72;font-size:12px;margin-bottom:4px}.library-history-list{margin:12px 0 0;padding-left:18px}.library-close-detail{float:right}.library-empty{padding:18px;border-radius:14px;background:rgba(255,255,255,.05)}
-      @media(max-width:720px){.library-detail-hero{grid-template-columns:1fr}.library-detail-poster{width:140px}.library-poster-card,.library-poster-card img,.library-poster-placeholder{width:122px;min-width:122px}.library-poster-card img,.library-poster-placeholder{height:183px}}
+      .library-preview-wrap{display:flex;flex-direction:column;gap:22px}.library-preview-row{display:flex;flex-direction:column;gap:10px}.library-preview-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.library-preview-title h3{margin:0}.library-preview-title small{opacity:.75}.library-poster-row{display:flex;gap:14px;overflow-x:auto;padding:6px 2px 16px;scroll-snap-type:x proximity}.library-poster-card{width:138px;min-width:138px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;scroll-snap-align:start}.library-poster-card img,.library-poster-placeholder{width:138px;height:207px;border-radius:14px;object-fit:cover;background:rgba(255,255,255,.08);box-shadow:0 10px 28px rgba(0,0,0,.28)}.library-poster-placeholder{display:flex;align-items:center;justify-content:center;padding:12px;text-align:center}.library-poster-card strong{display:block;margin-top:8px;font-size:13px;line-height:1.25}.library-poster-card small{display:block;opacity:.7;margin-top:3px}.library-detail{margin-top:18px;border:1px solid rgba(255,255,255,.12);border-radius:18px;overflow:hidden;background:rgba(0,0,0,.18)}.library-detail.hidden{display:none}.library-detail-hero{display:grid;grid-template-columns:170px 1fr;gap:22px;padding:22px;background-size:cover;background-position:center;position:relative}.library-detail-hero::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.86),rgba(0,0,0,.55));}.library-detail-hero>*{position:relative}.library-detail-poster{width:170px;border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.4)}.library-detail-body{padding:18px 22px}.library-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.library-detail-box{padding:12px;border-radius:12px;background:rgba(255,255,255,.06)}.library-detail-box span{display:block;opacity:.72;font-size:12px;margin-bottom:4px}.library-history-list{margin:12px 0 0;padding-left:18px}.library-close-detail{float:right}.library-empty{padding:18px;border-radius:14px;background:rgba(255,255,255,.05)}.library-season-list{display:flex;flex-direction:column;gap:12px}.library-season-block{border:1px solid rgba(255,255,255,.10);border-radius:14px;background:rgba(255,255,255,.04);overflow:hidden}.library-season-header{padding:12px 14px;display:flex;justify-content:space-between;gap:12px;background:rgba(255,255,255,.05)}.library-episode-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;padding:12px}.library-episode-card{display:grid;grid-template-columns:74px 1fr;gap:10px;align-items:start;padding:10px;border-radius:12px;background:rgba(0,0,0,.18)}.library-episode-card img,.library-episode-thumb{width:74px;height:42px;border-radius:8px;object-fit:cover;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:11px}.library-episode-card strong{display:block;font-size:13px;line-height:1.2}.library-episode-card small{display:block;opacity:.7;margin-top:3px}.library-episode-card p{margin:6px 0 0;font-size:12px;line-height:1.35;opacity:.82}
+      @media(max-width:720px){.library-detail-hero{grid-template-columns:1fr}.library-detail-poster{width:140px}.library-poster-card,.library-poster-card img,.library-poster-placeholder{width:122px;min-width:122px}.library-poster-card img,.library-poster-placeholder{height:183px}.library-episode-list{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
@@ -345,6 +345,14 @@
   function renderMediaDetails(library, meta, cacheItem, historyItems) {
     const background = meta.background ? ` style="background-image:url('${escapeHtml(meta.background)}')"` : '';
     const poster = meta.poster ? `<img class="library-detail-poster" src="${escapeHtml(meta.poster)}" alt="${escapeHtml(meta.name)}" />` : `<div class="library-detail-poster library-poster-placeholder">${escapeHtml(meta.name)}</div>`;
+    const episodes = Array.isArray(meta.videos) ? meta.videos : [];
+    const episodeSummary = summarizeEpisodes(episodes);
+    const seriesBoxes = library.type === 'series'
+      ? `<div class="library-detail-box"><span>Sezony</span><strong>${episodeSummary.seasonCount || 'brak danych'}</strong></div><div class="library-detail-box"><span>Odcinki</span><strong>${episodeSummary.episodeCount || 'brak danych'}</strong></div>`
+      : '';
+    const episodeHtml = library.type === 'series'
+      ? `<h3>Sezony i odcinki</h3>${renderEpisodes(episodes)}`
+      : '';
     const historyHtml = historyItems.length
       ? `<ul class="library-history-list">${historyItems.map((item) => `<li>${escapeHtml(formatDate(item.searchedAt))}: ${item.workingStreamCount ?? 0}/${item.streamCount ?? 0} działa, wybrany: ${escapeHtml(item.selectedOriginal?.title || 'brak')}</li>`).join('')}</ul>`
       : '<p>Ten tytuł nie był jeszcze wyszukiwany w agregatorze.</p>';
@@ -357,14 +365,42 @@
         <div class="library-detail-grid">
           <div class="library-detail-box"><span>Identyfikator</span><strong>${escapeHtml(meta.id)}</strong></div>
           <div class="library-detail-box"><span>Typ</span><strong>${escapeHtml(library.type)}</strong></div>
+          ${seriesBoxes}
           <div class="library-detail-box"><span>Cache streamów</span><strong>${cacheItem ? escapeHtml(cacheItem.status || 'jest w cache') : 'brak w cache'}</strong></div>
           <div class="library-detail-box"><span>Wybrany Original</span><strong>${escapeHtml(cacheItem?.selectedOriginal?.title || 'brak')}</strong></div>
           <div class="library-detail-box"><span>Gatunki</span><strong>${escapeHtml((meta.genres || []).join(', ') || 'brak danych')}</strong></div>
           <div class="library-detail-box"><span>Runtime</span><strong>${escapeHtml(meta.runtime || 'brak danych')}</strong></div>
         </div>
+        ${episodeHtml}
         <h3>Historia wyszukiwania</h3>${historyHtml}
         <h3>Uwagi</h3><p>Ten panel pokazuje realny wygląd katalogu i stan lokalnego agregatora: cache, historię i wybrany stream. Komentarze z zewnętrznych serwisów nie są jeszcze pobierane.</p>
       </div>`;
+  }
+
+  function summarizeEpisodes(episodes) {
+    const seasons = new Set(episodes.map((episode) => episode.season).filter((season) => Number.isFinite(Number(season))));
+    return { seasonCount: seasons.size, episodeCount: episodes.length };
+  }
+
+  function renderEpisodes(episodes) {
+    if (!episodes.length) return '<div class="library-empty">Brak listy odcinków w metadanych. Kliknij ponownie po synchronizacji metadanych albo sprawdź konfigurację TMDB.</div>';
+    const bySeason = new Map();
+    for (const episode of episodes) {
+      const season = Number(episode.season || 0);
+      if (!bySeason.has(season)) bySeason.set(season, []);
+      bySeason.get(season).push(episode);
+    }
+    const seasons = Array.from(bySeason.entries()).sort((a, b) => a[0] - b[0]);
+    return `<div class="library-season-list">${seasons.map(([season, items]) => {
+      const sorted = items.slice().sort((a, b) => Number(a.episode || 0) - Number(b.episode || 0));
+      return `<section class="library-season-block"><div class="library-season-header"><strong>Sezon ${escapeHtml(season)}</strong><span>${sorted.length} odc.</span></div><div class="library-episode-list">${sorted.map(renderEpisodeCard).join('')}</div></section>`;
+    }).join('')}</div>`;
+  }
+
+  function renderEpisodeCard(episode) {
+    const thumb = episode.thumbnail ? `<img src="${escapeHtml(episode.thumbnail)}" loading="lazy" alt="${escapeHtml(episode.title || '')}" />` : '<div class="library-episode-thumb">brak</div>';
+    const label = `S${String(episode.season ?? '?').padStart(2, '0')}E${String(episode.episode ?? '?').padStart(2, '0')}`;
+    return `<article class="library-episode-card">${thumb}<div><strong>${escapeHtml(label)} · ${escapeHtml(episode.title || 'Bez tytułu')}</strong><small>${escapeHtml(episode.released ? formatDate(episode.released).split(',')[0] : 'brak daty')}</small>${episode.overview ? `<p>${escapeHtml(episode.overview)}</p>` : ''}</div></article>`;
   }
 
   async function testLibrary(id, button) {
