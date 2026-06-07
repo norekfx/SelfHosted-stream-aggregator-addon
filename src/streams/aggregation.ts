@@ -123,6 +123,8 @@ async function validateStreamsByMode(streams: RawAggregatedStream[], preferences
 
   for (let index = 0; index < ordered.length; index += 1) {
     const stream = ordered[index];
+    if (!stream) continue;
+
     if (index >= limit) {
       stream.validation = notChecked("Link was outside the selected validation limit.");
       continue;
