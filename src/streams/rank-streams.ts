@@ -1,3 +1,4 @@
+import { getAppSettings } from "../settings/app-settings.js";
 import type { RawAggregatedStream } from "./aggregation.js";
 
 const qualityScore: Record<string, number> = {
@@ -84,10 +85,15 @@ export function selectBestOriginalStream(
 function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPreferences, includeWorkingBonus: boolean): RankedStream {
   let score = 0;
   const scoreReasons: string[] = [];
+  const settings = getAppSettings();
   const rawText = `${stream.name ?? ""} ${stream.title ?? ""} ${stream.description ?? ""} ${String(stream.behaviorHints?.filename ?? "")}`;
 
   if (includeWorkingBonus) {
     score += addScore(scoreReasons, "working", 10_000);
+  }
+
+  if (settings.preferDebrid && hasDebridHint(rawText)) {
+    score += addScore(scoreReasons, "preferred debrid source", 5_000);
   }
 
   const audioLanguage = stream.metadata.audioLanguage;
@@ -128,6 +134,10 @@ function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPref
 
   Object.assign(stream, { score, scoreReasons });
   return stream as RankedStream;
+}
+
+function hasDebridHint(value: string): boolean {
+  return /\[(?:RD\s*(?:⚡|\+)?|PM\+?|AD\+?)\]|\b(?:real[-\s]?debrid|alldebrid|all[-\s]?debrid|premiumize|debrid)\b/i.test(value);
 }
 
 function hasPreferredLanguageHint(value: string, preferredLanguage: string): boolean {
