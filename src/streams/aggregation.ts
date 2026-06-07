@@ -1,6 +1,7 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
+import { fetchDocchiFixedStreams } from "../docchi/docchi-public-mapper.js";
 import { getAppSettings, getEffectiveLinkValidationMode, getEffectiveStreamValidationTimeoutMs, type LinkValidationMode } from "../settings/app-settings.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
 import { rankCandidateStreams, rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
@@ -60,9 +61,11 @@ export async function aggregateStreams(
   };
 
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
-  const addonResults = await Promise.all(
-    activeAddons.map((addon) => fetchAddonStreams(addon, type, id))
-  );
+  const [regularAddonResults, docchiFixedResults] = await Promise.all([
+    Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, id))),
+    fetchDocchiFixedStreams(type, id)
+  ]);
+  const addonResults = [...regularAddonResults, ...docchiFixedResults];
 
   const rawStreams = addonResults.flatMap((result) =>
     result.streams.map((stream) => ({ addon: result.addon, stream }))
