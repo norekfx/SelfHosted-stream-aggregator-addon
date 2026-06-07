@@ -23,6 +23,7 @@ const settingsSchema = z.object({
   preferredSubtitleLanguage: z.string().min(2).optional(),
   preferDebrid: z.boolean().optional(),
   detectDebridPlaceholders: z.boolean().optional(),
+  debridPlaceholderValidationMode: z.enum(LINK_VALIDATION_MODES).optional(),
   debridPlaceholderMinSizeMb: z.coerce.number().int().min(1).max(102400).optional(),
   debridPlaceholderMinDurationMinutes: z.coerce.number().int().min(1).max(1440).optional(),
   debridPlaceholderCompareDeclaredSize: z.boolean().optional(),
