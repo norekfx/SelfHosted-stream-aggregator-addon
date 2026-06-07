@@ -34,13 +34,14 @@ const app = Fastify({
 
 await app.register(cors, { origin: true });
 app.get("/app.js", async (_, reply) => {
-  const [mainScript, addonDeleteHelper] = await Promise.all([
+  const [mainScript, addonDeleteHelper, libraryEpisodeIdHelper] = await Promise.all([
     readFile(join(publicDir, "app.js"), "utf-8"),
-    readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => "")
+    readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => ""),
+    readFile(join(publicDir, "library-episode-id-helper.js"), "utf-8").catch(() => "")
   ]);
   reply.header("cache-control", "no-store, max-age=0");
   reply.type("application/javascript; charset=utf-8");
-  return `${mainScript}\n\n${addonDeleteHelper}`;
+  return `${mainScript}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}`;
 });
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
