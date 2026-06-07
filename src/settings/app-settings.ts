@@ -219,9 +219,9 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   return normalized;
 }
 
-function normalizeSyncInterval(value: number): MetadataSyncIntervalMinutes {
+function normalizeSyncInterval(value: number): number {
   const parsed = Number.isFinite(value) ? Math.round(value) : defaults.metadataSyncIntervalMinutes;
-  return METADATA_SYNC_INTERVALS.includes(parsed as MetadataSyncIntervalMinutes) ? parsed as MetadataSyncIntervalMinutes : defaults.metadataSyncIntervalMinutes;
+  return METADATA_SYNC_INTERVALS.includes(parsed as MetadataSyncIntervalMinutes) ? parsed : defaults.metadataSyncIntervalMinutes;
 }
 
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
