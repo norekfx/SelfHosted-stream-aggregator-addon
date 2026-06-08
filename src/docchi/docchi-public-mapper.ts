@@ -6,7 +6,7 @@ import { writeSystemLog } from "../system/system-log.js";
 import type { StreamType } from "../streams/types.js";
 import { fetchTmdbMeta } from "../tmdb/tmdb-client.js";
 import { getDocchiEpisodeMappingByMappedId, saveDocchiEpisodeMappingFromFix } from "./docchi-episode-mapping-store.js";
-import { resolveKometaAnimeIds, type KometaAnimeIdsMatch } from "./kometa-anime-ids.js";
+import { getKometaAnimeIdsStatus, resolveKometaAnimeIds, type KometaAnimeIdsMatch } from "./kometa-anime-ids.js";
 
 export type DocchiEpisodeFix = {
   originalId: string;
@@ -26,11 +26,25 @@ export type DocchiEpisodeFix = {
   debug?: DocchiEpisodeFixDebug;
 };
 
+type KometaLookupDebug = {
+  enabled: boolean;
+  cached: boolean;
+  fresh: boolean;
+  entries?: number;
+  sizeMb?: number;
+  fetchedAt?: string;
+  lookedFor: { imdbId?: string; tmdbShowId?: number };
+  result: "disabled" | "no_cache" | "no_match" | "matched" | "no_mal_id" | "docchi_meta_failed";
+  matchedBy?: "imdb_id" | "tmdb_show_id";
+  malIds?: string[];
+  anilistIds?: string[];
+};
+
 type DocchiEpisodeFixDebug = {
   sourceEpisode?: TmdbEpisode;
   searchTerms: string[];
   addons: Array<{ id: string; name?: string; manifestUrl: string }>;
-  resolver: { source: "kometa-anime-ids" | "fallback:title-search" | "persisted:mapped-id" | "none"; kometa?: KometaAnimeIdsMatch; triedDocchiMetaIds?: string[]; fallbackUsed?: boolean; tmdbShowId?: number };
+  resolver: { source: "kometa-anime-ids" | "fallback:title-search" | "persisted:mapped-id" | "none"; kometa?: KometaAnimeIdsMatch; kometaStatus?: KometaLookupDebug; triedDocchiMetaIds?: string[]; fallbackUsed?: boolean; tmdbShowId?: number };
   plans: Array<{
     addonId: string;
     addonName?: string;
@@ -153,8 +167,10 @@ async function buildDocchiSeriesPlan(addon: RegisteredAddon, seriesId: string, s
 }
 
 async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number, tmdbShowId?: number): Promise<{ anime: DocchiResolvedAnime[]; resolver: DocchiEpisodeFixDebug["resolver"] }> {
-  const kometa = await resolveKometaAnimeIds({ imdbId: seriesId, tmdbShowId });
+  const lookup = { imdbId: seriesId, tmdbShowId };
+  const kometa = await resolveKometaAnimeIds(lookup);
   const triedDocchiMetaIds: string[] = [];
+  const kometaStatus = buildKometaLookupDebug(lookup, kometa);
   if (kometa?.malIds.length) {
     const anime: DocchiResolvedAnime[] = [];
     for (const malId of kometa.malIds) {
@@ -163,11 +179,14 @@ async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, sear
       const full = await fetchDocchiMeta(addon, docchiMetaId);
       if (full && full.episodeCount > 1) anime.push(full);
     }
-    if (anime.length) return { anime: sortResolvedAnime(anime), resolver: { source: "kometa-anime-ids", kometa, triedDocchiMetaIds, fallbackUsed: false, tmdbShowId } };
-    writeSystemLog("warn", "docchi", "Kometa Anime-IDs matched series, but Docchi meta lookup returned no usable anime. Falling back to title search.", { seriesId, tmdbShowId, kometa, triedDocchiMetaIds });
+    if (anime.length) return { anime: sortResolvedAnime(anime), resolver: { source: "kometa-anime-ids", kometa, kometaStatus: { ...kometaStatus, result: "matched" }, triedDocchiMetaIds, fallbackUsed: false, tmdbShowId } };
+    const failedStatus: KometaLookupDebug = { ...kometaStatus, result: "docchi_meta_failed" };
+    writeSystemLog("warn", "docchi", "Kometa Anime-IDs matched series, but Docchi meta lookup returned no usable anime. Falling back to title search.", { seriesId, tmdbShowId, kometa, kometaStatus: failedStatus, triedDocchiMetaIds });
+    const fallbackAnime = await resolveDocchiAnimeByTitle(addon, seriesId, searchTerms, limit);
+    return { anime: fallbackAnime, resolver: { source: "fallback:title-search", kometa, kometaStatus: failedStatus, triedDocchiMetaIds, fallbackUsed: true, tmdbShowId } };
   }
   const fallbackAnime = await resolveDocchiAnimeByTitle(addon, seriesId, searchTerms, limit);
-  return { anime: fallbackAnime, resolver: { source: "fallback:title-search", kometa, triedDocchiMetaIds, fallbackUsed: true, tmdbShowId } };
+  return { anime: fallbackAnime, resolver: { source: "fallback:title-search", kometa, kometaStatus, triedDocchiMetaIds, fallbackUsed: true, tmdbShowId } };
 }
 
 async function resolveDocchiAnimeByTitle(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number): Promise<DocchiResolvedAnime[]> {
@@ -375,6 +394,28 @@ function buildSearchTerms(title: string): string[] {
 
 function sortResolvedAnime(items: DocchiResolvedAnime[]): DocchiResolvedAnime[] {
   return [...items].sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999) || (a.seasonHint ?? 999) - (b.seasonHint ?? 999));
+}
+
+function buildKometaLookupDebug(input: { imdbId?: string; tmdbShowId?: number }, match?: KometaAnimeIdsMatch): KometaLookupDebug {
+  const status = getKometaAnimeIdsStatus();
+  let result: KometaLookupDebug["result"] = "no_match";
+  if (!status.enabled) result = "disabled";
+  else if (!status.cached) result = "no_cache";
+  else if (match && !match.malIds.length) result = "no_mal_id";
+  else if (match) result = "matched";
+  return {
+    enabled: status.enabled,
+    cached: status.cached,
+    fresh: status.fresh,
+    entries: status.entries,
+    sizeMb: status.sizeMb,
+    fetchedAt: status.fetchedAt,
+    lookedFor: { imdbId: input.imdbId, tmdbShowId: input.tmdbShowId },
+    result,
+    matchedBy: match?.matchedBy,
+    malIds: match?.malIds,
+    anilistIds: match?.anilistIds
+  };
 }
 
 function extractYear(value?: string): number | undefined {
