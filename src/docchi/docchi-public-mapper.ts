@@ -225,12 +225,25 @@ async function buildDocchiSeriesPlan(addon: RegisteredAddon, seriesId: string, s
 
 async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number): Promise<DocchiResolvedAnime[]> {
   const previews = await searchDocchiAnime(addon, searchTerms, limit);
+  const expectedTitle = normalizeTitle(searchTerms[0]);
   const resolved: DocchiResolvedAnime[] = [];
   for (const preview of previews) {
     const id = normalizeDocchiMetaId(preview.id);
     if (!id) continue;
     const full = await fetchDocchiMeta(addon, id, preview.name, preview.releaseInfo);
-    if (full && full.episodeCount > 1) resolved.push(full);
+    if (!full || full.episodeCount <= 1) continue;
+    if (!isLikelySameAnime(full, expectedTitle)) {
+      writeSystemLog("info", "docchi", "Docchi meta rejected because title does not match requested series.", {
+        seriesId,
+        expectedTitle,
+        docchiId: full.id,
+        docchiName: full.name,
+        releaseInfo: full.releaseInfo,
+        similarity: titleSimilarity(expectedTitle, normalizeTitle(full.name))
+      });
+      continue;
+    }
+    resolved.push(full);
   }
   return sortResolvedAnime(resolved);
 }
@@ -380,7 +393,7 @@ function dedupePlanRows(rows: DocchiPlanRow[]): DocchiPlanRow[] {
   const seen = new Set<string>();
   const result: DocchiPlanRow[] = [];
   for (const row of rows) {
-    const key = row.released ? `${row.released}|${normalizeTitle(row.docchiTitle)}` : row.docchiId;
+    const key = row.docchiId || (row.released ? `${row.released}|${normalizeTitle(row.docchiTitle)}` : row.docchiId);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(row);
@@ -425,8 +438,8 @@ function buildSearchTerms(title: string): string[] {
   const splitTitle = title.split(/[:–—-]/)[0]?.trim();
   if (splitTitle) terms.push(splitTitle);
   const words = clean.split(/\s+/).filter(Boolean);
-  for (let length = words.length - 1; length >= 1; length -= 1) terms.push(words.slice(0, length).join(" "));
-  return Array.from(new Set(terms.map((term) => term.trim()).filter((term) => term.length >= 3))).slice(0, 8);
+  for (let length = words.length - 1; length >= 2; length -= 1) terms.push(words.slice(0, length).join(" "));
+  return Array.from(new Set(terms.map((term) => term.trim()).filter((term) => term.length >= 3))).slice(0, 6);
 }
 
 function sortResolvedAnime(items: DocchiResolvedAnime[]): DocchiResolvedAnime[] {
@@ -448,8 +461,6 @@ function extractSeasonHint(name?: string): number | undefined {
   if (!name) return undefined;
   const sMatch = name.match(/\bS(?:eason)?\s*(\d+)\b/i) ?? name.match(/\b(?:season|sezon)\s*(\d+)\b/i);
   if (sMatch?.[1]) return Number.parseInt(sMatch[1], 10);
-  const partMatch = name.match(/\b(?:part|cour)\s*(\d+)\b/i);
-  if (partMatch?.[1]) return Number.parseInt(partMatch[1], 10);
   return undefined;
 }
 
@@ -481,6 +492,15 @@ function parseDate(value?: string): Date | undefined {
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function isLikelySameAnime(item: DocchiResolvedAnime, expectedTitle: string): boolean {
+  if (!expectedTitle) return true;
+  const candidate = normalizeTitle(item.name);
+  if (!candidate) return false;
+  if (candidate === expectedTitle) return true;
+  if (candidate.includes(expectedTitle) || expectedTitle.includes(candidate)) return true;
+  return titleSimilarity(expectedTitle, candidate) >= 0.65;
 }
 
 function normalizeTitle(value?: string): string {
