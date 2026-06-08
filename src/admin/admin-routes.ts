@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { deleteAddon, getAddon, listAddons, refreshAddonHealth, registerAddon, setAddonEnabled } from "../addons/addon-registry.js";
+import { resetAllDocchiEpisodeMappings } from "../docchi/docchi-episode-mapping-store.js";
 import { clearLibraryCache } from "../libraries/library-cache.js";
 import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
@@ -99,6 +100,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       addons: matches.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, enabled: addon.enabled, status: addon.status }))
     };
   });
+
+  app.post("/admin/docchi/restore-original-indexes", async () => ({ ok: true, reset: resetAllDocchiEpisodeMappings() }));
 
   app.get("/admin/languages", async () => {
     const languages = [...EUROPEAN_LANGUAGES].sort((a, b) => {
