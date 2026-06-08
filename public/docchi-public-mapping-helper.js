@@ -5,6 +5,13 @@
     ['series', 'Tylko seriale'],
     ['all', 'Dla wszystkich']
   ];
+  const KOMETA_INTERVALS = [
+    ['daily', 'Raz na 24h'],
+    ['weekly', 'Raz na tydzień'],
+    ['biweekly', 'Raz na 2 tygodnie'],
+    ['monthly', 'Raz na miesiąc'],
+    ['once', 'Tylko raz']
+  ];
   const LIBRARY_MODES = [['inherit', 'Dziedzicz globalne'], ...MODES];
 
   async function initDocchiPanel() {
@@ -29,7 +36,10 @@
         <div class="panel-grid two">
           <label>Eksperymentalne mapowanie przez Docchi public<select id="docchiPublicMappingMode">${MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
           <label>Status Docchi<input id="docchiDetectedStatus" readonly value="Sprawdzanie..." /></label>
+          <label>Kometa Anime-IDs<select id="docchiKometaAnimeIdsEnabled"><option value="false">Wyłączone</option><option value="true">Włączone</option></select></label>
+          <label>Pobieranie Kometa Anime-IDs<select id="docchiKometaAnimeIdsRefreshInterval">${KOMETA_INTERVALS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
         </div>
+        <p class="hint">Kometa Anime-IDs, gdy jest włączone, próbuje znaleźć MAL ID po IMDb/TMDB i pyta Docchi bezpośrednio o właściwe anime. Gdy identyfikator nie zostanie znaleziony, addon wraca do starego search po tytule.</p>
         <p class="hint">Domyślnie wyłączone. Nasz addon wykrywa zainstalowany i włączony Docchi po nazwie/opisie/URL manifestu. Publiczny Docchi nie gwarantuje mapowania IMDb, dlatego tryb jest eksperymentalny.</p>
         <div class="action-row">
           <button class="primary-btn" type="submit">Zapisz ustawienia Docchi</button>
@@ -57,7 +67,10 @@
   async function loadDocchiSettings() {
     try {
       const data = await apiRequest('/admin/settings');
-      setValue('#docchiPublicMappingMode', data.settings?.docchiPublicMappingMode || 'disabled');
+      const settings = data.settings || {};
+      setValue('#docchiPublicMappingMode', settings.docchiPublicMappingMode || 'disabled');
+      setValue('#docchiKometaAnimeIdsEnabled', String(settings.docchiKometaAnimeIdsEnabled === true));
+      setValue('#docchiKometaAnimeIdsRefreshInterval', settings.docchiKometaAnimeIdsRefreshInterval || 'daily');
     } catch {}
   }
 
@@ -67,7 +80,11 @@
     await runButton(button, 'Zapisuję...', async () => {
       await apiRequest('/admin/settings', {
         method: 'PATCH',
-        body: { docchiPublicMappingMode: value('#docchiPublicMappingMode') || 'disabled' }
+        body: {
+          docchiPublicMappingMode: value('#docchiPublicMappingMode') || 'disabled',
+          docchiKometaAnimeIdsEnabled: value('#docchiKometaAnimeIdsEnabled') === 'true',
+          docchiKometaAnimeIdsRefreshInterval: value('#docchiKometaAnimeIdsRefreshInterval') || 'daily'
+        }
       });
       showToast('Ustawienia Docchi zapisane.');
       await refreshDocchiStatus();
@@ -91,9 +108,11 @@
     try {
       const data = await apiRequest('/admin/docchi/status');
       const status = document.querySelector('#docchiDetectedStatus');
-      if (status) {
-        status.value = data.enabled ? `Wykryto i włączono (${data.addons.length})` : data.detected ? `Wykryto, ale nie jest włączony online (${data.addons.length})` : 'Nie wykryto';
-      }
+      if (status) status.value = data.enabled ? `Wykryto i włączono (${data.addons.length})` : data.detected ? `Wykryto, ale nie jest włączony online (${data.addons.length})` : 'Nie wykryto';
+      const kometaSelect = document.querySelector('#docchiKometaAnimeIdsEnabled');
+      const intervalSelect = document.querySelector('#docchiKometaAnimeIdsRefreshInterval');
+      if (kometaSelect) kometaSelect.disabled = !data.enabled;
+      if (intervalSelect) intervalSelect.disabled = !data.enabled;
       annotateDocchiAddonRows(data.addons || []);
     } catch {
       const status = document.querySelector('#docchiDetectedStatus');
@@ -160,10 +179,7 @@
     const allowed = new Set(LIBRARY_MODES.map(([value]) => value));
     if (!allowed.has(next)) { showToast('Nieprawidłowy tryb Docchi.'); return; }
     await runButton(button, 'Zapisuję...', async () => {
-      await apiRequest(`/admin/libraries/${encodeURIComponent(button.dataset.docchiLibrary || '')}`, {
-        method: 'PATCH',
-        body: { config: { docchiPublicMappingMode: next } }
-      });
+      await apiRequest(`/admin/libraries/${encodeURIComponent(button.dataset.docchiLibrary || '')}`, { method: 'PATCH', body: { config: { docchiPublicMappingMode: next } } });
       showToast('Tryb Docchi dla biblioteki zapisany.');
       document.querySelector('#reloadLibrariesBtn')?.click();
     });
