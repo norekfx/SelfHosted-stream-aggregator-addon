@@ -1,7 +1,7 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
-import { getDocchiEpisodeMappingByMappedId } from "../docchi/docchi-episode-mapping-store.js";
+import { getDocchiEpisodeMappingByMappedId, listDocchiEpisodeMappingsForSeries } from "../docchi/docchi-episode-mapping-store.js";
 import { fetchDocchiFixedStreams } from "../docchi/docchi-public-mapper.js";
 import { getAppSettings, getEffectiveLinkValidationMode, getEffectiveStreamValidationTimeoutMs, type LinkValidationMode } from "../settings/app-settings.js";
 import { writeSystemLog } from "../system/system-log.js";
@@ -51,6 +51,8 @@ export type AggregationResult = {
   selectedOriginal: RankedStream | null;
 };
 
+type EpisodeMappingSummary = { originalId: string; mappedId: string; docchiId?: string; seriesId: string; sourceSeason: number; mappedSeason: number; sourceEpisode: number; mappedEpisode: number };
+
 export async function aggregateStreams(
   type: StreamType,
   id: string,
@@ -65,7 +67,8 @@ export async function aggregateStreams(
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
   const persistedDocchiMapping = type === "series" ? getDocchiEpisodeMappingByMappedId(id) : undefined;
   const regularAddonId = persistedDocchiMapping?.originalId ?? id;
-  const docchiOnlyReason = getDocchiOnlyReason(settings.docchiStreamForceMode, persistedDocchiMapping);
+  const seriesMappings = persistedDocchiMapping ? listDocchiEpisodeMappingsForSeries(persistedDocchiMapping.seriesId) : [];
+  const docchiOnlyReason = getDocchiOnlyReason(settings.docchiStreamForceMode, persistedDocchiMapping, seriesMappings);
   const useDocchiOnly = Boolean(docchiOnlyReason);
   if (useDocchiOnly) {
     writeSystemLog("warn", "aggregation", "Docchi stream force mode skipped regular addons for mapped episode.", {
@@ -75,6 +78,9 @@ export async function aggregateStreams(
       originalId: persistedDocchiMapping?.originalId,
       mappedId: persistedDocchiMapping?.mappedId,
       docchiId: persistedDocchiMapping?.docchiId,
+      sourceSeasons: countDistinct(seriesMappings.map((mapping) => mapping.sourceSeason)),
+      mappedSeasons: countDistinct(seriesMappings.map((mapping) => mapping.mappedSeason)),
+      mappedEpisodes: seriesMappings.length,
       skippedRegularAddons: activeAddons.length
     });
   } else if (persistedDocchiMapping && regularAddonId !== id) {
@@ -124,11 +130,20 @@ export async function aggregateStreams(
   };
 }
 
-function getDocchiOnlyReason(mode: string, mapping: { originalId: string; mappedId: string; docchiId?: string } | undefined): string | undefined {
+function getDocchiOnlyReason(mode: string, mapping: EpisodeMappingSummary | undefined, seriesMappings: EpisodeMappingSummary[]): string | undefined {
   if (!mapping?.docchiId) return undefined;
   if (mode === "enabled") return "enabled";
-  if (mode === "partial" && mapping.originalId !== mapping.mappedId) return "partial:mapped-id-differs";
+  if (mode !== "partial") return undefined;
+  if (mapping.originalId !== mapping.mappedId) return "partial:mapped-id-differs";
+  if (mapping.sourceSeason !== mapping.mappedSeason || mapping.sourceEpisode !== mapping.mappedEpisode) return "partial:episode-index-differs";
+  const sourceSeasons = countDistinct(seriesMappings.map((item) => item.sourceSeason));
+  const mappedSeasons = countDistinct(seriesMappings.map((item) => item.mappedSeason));
+  if (sourceSeasons > 0 && mappedSeasons > 0 && sourceSeasons !== mappedSeasons) return "partial:season-structure-differs";
   return undefined;
+}
+
+function countDistinct(values: Array<number | undefined>): number {
+  return new Set(values.filter((value): value is number => Number.isFinite(value))).size;
 }
 
 function isStreamAddonEnabled(addon: RegisteredAddon): boolean {
