@@ -6,7 +6,7 @@ import { resetAllDocchiEpisodeMappings } from "../docchi/docchi-episode-mapping-
 import { clearLibraryCache } from "../libraries/library-cache.js";
 import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import { DOCCHI_PUBLIC_MAPPING_MODES, getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
+import { DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS, DOCCHI_PUBLIC_MAPPING_MODES, getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
@@ -76,6 +76,8 @@ const settingsSchema = z.object({
   tmdbRegion: z.string().optional(),
   metadataSyncIntervalMinutes: z.coerce.number().refine((value) => (METADATA_SYNC_INTERVALS as readonly number[]).includes(value), { message: "Invalid metadata sync interval." }).optional(),
   docchiPublicMappingMode: z.enum(DOCCHI_PUBLIC_MAPPING_MODES).optional(),
+  docchiKometaAnimeIdsEnabled: z.boolean().optional(),
+  docchiKometaAnimeIdsRefreshInterval: z.enum(DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS).optional(),
   autoTranscodeMinQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   autoTranscodeMaxQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   transcodePreset: z.enum(TRANSCODE_PRESETS).optional(),
@@ -218,22 +220,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       const original = toDiagnosticAggregatedStream(params.data.type, params.data.id, stream);
       saveSelectedOriginal(original);
       const encodedId = encodeURIComponent(original.id);
-      return {
-        id: original.id,
-        title: original.title,
-        addon: original.sourceAddon,
-        originalUrl: original.originalUrl,
-        quality: original.quality,
-        audioLanguage: original.audioLanguage,
-        subtitleLanguage: original.subtitleLanguage,
-        validationReason: original.validationReason,
-        score: stream.score,
-        scoreReasons: stream.scoreReasons,
-        urls: {
-          original: original.originalUrl,
-          ...Object.fromEntries(TRANSCODE_QUALITIES.map((quality) => [quality, `${requestBaseUrl}/transcode/${encodedId}/${quality}/master.m3u8`]))
-        }
-      };
+      return { id: original.id, title: original.title, addon: original.sourceAddon, originalUrl: original.originalUrl, quality: original.quality, audioLanguage: original.audioLanguage, subtitleLanguage: original.subtitleLanguage, validationReason: original.validationReason, score: stream.score, scoreReasons: stream.scoreReasons, urls: { original: original.originalUrl, ...Object.fromEntries(TRANSCODE_QUALITIES.map((quality) => [quality, `${requestBaseUrl}/transcode/${encodedId}/${quality}/master.m3u8`])) } };
     });
     writeSystemLog("info", "transcode-diagnostics", "Transcode candidates scan completed.", { ...params.data, candidates: candidates.length, workingStreamCount: result.workingStreamCount });
     return { type: params.data.type, id: params.data.id, candidates };
@@ -245,75 +232,16 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { cache: listCachedSearchResults(query.data.limit) };
   });
 
-  app.delete("/admin/cache", async () => {
-    const deleted = clearSearchCache();
-    writeSystemLog("info", "cache", "Search cache cleared.", { deleted });
-    return { ok: true, deleted };
-  });
-
-  app.get<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => {
-    const params = aggregateParamsSchema.safeParse(request.params);
-    if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; }
-    await refreshNow(params.data.type, params.data.id);
-    return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" };
-  });
-
-  app.post<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => {
-    const params = aggregateParamsSchema.safeParse(request.params);
-    if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; }
-    await refreshNow(params.data.type, params.data.id);
-    return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" };
-  });
-
-  app.get<{ Querystring: { limit?: string } }>("/admin/history", async (request, reply) => {
-    const query = limitQuerySchema.safeParse(request.query);
-    if (!query.success) { reply.code(400); return { error: "Invalid history query.", details: query.error.flatten() }; }
-    return { history: listSearchHistory(query.data.limit) };
-  });
-
-  app.delete("/admin/history", async () => {
-    const deleted = clearSearchHistory();
-    writeSystemLog("info", "history", "Search history cleared.", { deleted });
-    return { ok: true, deleted };
-  });
-
-  app.get<{ Params: { historyId: string } }>("/admin/history/:historyId", async (request, reply) => {
-    const details = getSearchHistoryDetails(request.params.historyId);
-    if (!details) { reply.code(404); return { error: "History entry not found." }; }
-    return { details };
-  });
-
-  app.get("/admin/addons/:id", async (request, reply) => {
-    const id = (request.params as { id: string }).id;
-    const addon = getAddon(id);
-    if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
-  });
-
-  app.post("/admin/addons/:id/check", async (request, reply) => {
-    const id = (request.params as { id: string }).id;
-    const addon = await refreshAddonHealth(id);
-    if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
-  });
-
-  app.patch("/admin/addons/:id", async (request, reply) => {
-    const body = updateAddonSchema.safeParse(request.body);
-    if (!body.success) { reply.code(400); return { error: "Invalid addon update payload.", details: body.error.flatten() }; }
-    const id = (request.params as { id: string }).id;
-    const addon = setAddonEnabled(id, body.data.enabled);
-    if (!addon) { reply.code(404); return { error: "Addon not found." }; }
-    return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } };
-  });
-
-  app.delete("/admin/addons/:id", async (request, reply) => {
-    const id = (request.params as { id: string }).id;
-    const result = deleteAddon(id);
-    if (result.status === "not_found") { reply.code(404); return { error: "Addon not found." }; }
-    if (result.status === "enabled") { reply.code(409); return { error: "Disable addon before deleting it.", addon: result.addon }; }
-    writeSystemLog("info", "addons", "Addon deleted.", { id: result.addon.id, name: result.addon.name, manifestUrl: result.addon.manifestUrl });
-    return { ok: true, addon: result.addon };
-  });
+  app.delete("/admin/cache", async () => { const deleted = clearSearchCache(); writeSystemLog("info", "cache", "Search cache cleared.", { deleted }); return { ok: true, deleted }; });
+  app.get<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => { const params = aggregateParamsSchema.safeParse(request.params); if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; } await refreshNow(params.data.type, params.data.id); return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" }; });
+  app.post<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => { const params = aggregateParamsSchema.safeParse(request.params); if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; } await refreshNow(params.data.type, params.data.id); return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" }; });
+  app.get<{ Querystring: { limit?: string } }>("/admin/history", async (request, reply) => { const query = limitQuerySchema.safeParse(request.query); if (!query.success) { reply.code(400); return { error: "Invalid history query.", details: query.error.flatten() }; } return { history: listSearchHistory(query.data.limit) }; });
+  app.delete("/admin/history", async () => { const deleted = clearSearchHistory(); writeSystemLog("info", "history", "Search history cleared.", { deleted }); return { ok: true, deleted }; });
+  app.get<{ Params: { historyId: string } }>("/admin/history/:historyId", async (request, reply) => { const details = getSearchHistoryDetails(request.params.historyId); if (!details) { reply.code(404); return { error: "History entry not found." }; } return { details }; });
+  app.get("/admin/addons/:id", async (request, reply) => { const id = (request.params as { id: string }).id; const addon = getAddon(id); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
+  app.post("/admin/addons/:id/check", async (request, reply) => { const id = (request.params as { id: string }).id; const addon = await refreshAddonHealth(id); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
+  app.patch("/admin/addons/:id", async (request, reply) => { const body = updateAddonSchema.safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid addon update payload.", details: body.error.flatten() }; } const id = (request.params as { id: string }).id; const addon = setAddonEnabled(id, body.data.enabled); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
+  app.delete("/admin/addons/:id", async (request, reply) => { const id = (request.params as { id: string }).id; const result = deleteAddon(id); if (result.status === "not_found") { reply.code(404); return { error: "Addon not found." }; } if (result.status === "enabled") { reply.code(409); return { error: "Disable addon before deleting it.", addon: result.addon }; } writeSystemLog("info", "addons", "Addon deleted.", { id: result.addon.id, name: result.addon.name, manifestUrl: result.addon.manifestUrl }); return { ok: true, addon: result.addon }; });
 }
 
 function isDocchiAddon(addon: { name?: string; manifestUrl: string; description?: string }): boolean {
@@ -324,17 +252,5 @@ function toDiagnosticAggregatedStream(type: StreamType, mediaId: string, stream:
   const title = stream.title ?? stream.name ?? stream.infoHash ?? stream.url ?? "Unknown stream";
   const hash = createHash("sha1").update(JSON.stringify({ type, mediaId, url: stream.url, externalUrl: stream.externalUrl, infoHash: stream.infoHash, fileIdx: stream.fileIdx, title, addonId: stream.addonId })).digest("hex");
   const validationStatus = stream.validation?.status === "working" || stream.validation?.status === "failed" ? stream.validation.status : "pending";
-  return {
-    id: `${type}:${mediaId}:${hash}`,
-    title,
-    name: stream.name ?? title,
-    originalUrl: stream.url ?? stream.externalUrl,
-    sourceAddon: stream.addonName ?? stream.addonId,
-    quality: stream.metadata?.quality,
-    audioLanguage: stream.metadata?.audioLanguage,
-    subtitleLanguage: stream.metadata?.subtitleLanguage,
-    isValidated: validationStatus !== "pending",
-    validationStatus,
-    validationReason: stream.validation?.reason
-  };
+  return { id: `${type}:${mediaId}:${hash}`, title, name: stream.name ?? title, originalUrl: stream.url ?? stream.externalUrl, sourceAddon: stream.addonName ?? stream.addonId, quality: stream.metadata?.quality, audioLanguage: stream.metadata?.audioLanguage, subtitleLanguage: stream.metadata?.subtitleLanguage, isValidated: validationStatus !== "pending", validationStatus, validationReason: stream.validation?.reason };
 }
