@@ -5,7 +5,7 @@ import { getAppSettings } from "../settings/app-settings.js";
 import { writeSystemLog } from "../system/system-log.js";
 import type { StreamType } from "../streams/types.js";
 import { fetchTmdbMeta } from "../tmdb/tmdb-client.js";
-import { getDocchiEpisodeMappingByMappedId, saveDocchiEpisodeMappingFromFix } from "./docchi-episode-mapping-store.js";
+import { getDocchiEpisodeMappingByMappedId, saveDocchiEpisodeMapping, saveDocchiEpisodeMappingFromFix } from "./docchi-episode-mapping-store.js";
 import { getKometaAnimeIdsStatus, resolveKometaAnimeIds, type KometaAnimeIdsMatch } from "./kometa-anime-ids.js";
 
 export type DocchiEpisodeFix = {
@@ -59,7 +59,7 @@ type DocchiEpisodeFixDebug = {
 type DocchiMetaPreview = { id?: string; name?: string; type?: string; releaseInfo?: string };
 type DocchiVideo = { id?: string; title?: string; episode?: number; released?: string; overview?: string; available?: boolean; season?: number };
 type DocchiResolvedAnime = { id: string; name?: string; releaseInfo?: string; year?: number; seasonHint?: number; episodeCount: number; videos: DocchiVideo[] };
-type TmdbEpisode = { title?: string; released?: string; season?: number; episode?: number };
+type TmdbEpisode = { id?: string; title?: string; released?: string; season?: number; episode?: number };
 type TmdbMeta = { name?: string; tmdbId?: number; videos?: TmdbEpisode[] };
 type DocchiPlanRow = { docchiId: string; docchiTitle?: string; docchiAnimeId: string; docchiAnimeName?: string; released?: string; absoluteIndex: number; season: number; episode: number; sourceEpisode?: number };
 type DocchiSeriesPlan = { rows: DocchiPlanRow[]; anime: DocchiResolvedAnime[]; resolverSource: DocchiEpisodeFixDebug["resolver"] };
@@ -124,10 +124,11 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
 
   for (const addon of addons) {
     const plan = await buildDocchiSeriesPlan(addon, parsed.seriesId, searchTerms, forced ? 16 : 10, tmdbMeta?.tmdbId);
+    const persistedPlanMappings = persistDocchiPlanMappings(parsed.seriesId, tmdbMeta?.videos, plan.rows, plan.resolverSource.source);
     debug.resolver = plan.resolverSource;
     const match = choosePlanRow(plan.rows, parsed, sourceEpisode);
     debug.plans.push({ addonId: addon.id, addonName: addon.name, anime: plan.anime.map((item) => ({ id: item.id, name: item.name, releaseInfo: item.releaseInfo, year: item.year, seasonHint: item.seasonHint, episodeCount: item.episodeCount })), seasons: summarizePlanSeasons(plan.rows), rows: plan.rows.map((row) => ({ docchiId: row.docchiId, title: row.docchiTitle, released: row.released, season: row.season, episode: row.episode, absoluteIndex: row.absoluteIndex, animeName: row.docchiAnimeName })), candidates: match?.candidates });
-    writeSystemLog(match ? "info" : "warn", "docchi", "Docchi plan match result.", { originalId, resolver: plan.resolverSource, planRows: plan.rows.length, anime: plan.anime.map((item) => ({ id: item.id, name: item.name, episodeCount: item.episodeCount, year: item.year, seasonHint: item.seasonHint })), match: match ? { docchiId: match.row.docchiId, title: match.row.docchiTitle, season: match.row.season, episode: match.row.episode, method: match.method, confidence: match.confidence, candidates: match.candidates.slice(0, 6) } : undefined });
+    writeSystemLog(match ? "info" : "warn", "docchi", "Docchi plan match result.", { originalId, resolver: plan.resolverSource, planRows: plan.rows.length, persistedPlanMappings, anime: plan.anime.map((item) => ({ id: item.id, name: item.name, episodeCount: item.episodeCount, year: item.year, seasonHint: item.seasonHint })), match: match ? { docchiId: match.row.docchiId, title: match.row.docchiTitle, season: match.row.season, episode: match.row.episode, method: match.method, confidence: match.confidence, candidates: match.candidates.slice(0, 6) } : undefined });
     if (!match) continue;
     const mappedId = `${parsed.seriesId}:${match.row.season}:${match.row.episode}`;
     debug.decision = `accepted:${match.method}:${match.confidence}`;
@@ -308,6 +309,40 @@ function toPlanRow(anime: DocchiResolvedAnime, video: DocchiVideo, fallbackEpiso
   const docchiId = normalizeDocchiEpisodeId(video.id, anime.id, sourceEpisode);
   if (!docchiId) return undefined;
   return { docchiId, docchiTitle: video.title, docchiAnimeId: anime.id, docchiAnimeName: anime.name, released: video.released, absoluteIndex: fallbackEpisode, season: Number(video.season) || 0, episode: sourceEpisode, sourceEpisode };
+}
+
+function persistDocchiPlanMappings(seriesId: string, sourceVideos: TmdbEpisode[] | undefined, rows: DocchiPlanRow[], matchMethod: string): number {
+  const sources = (sourceVideos ?? [])
+    .filter((video) => video.id && parseEpisodeId(video.id)?.seriesId === seriesId)
+    .sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0));
+  if (sources.length < 2 || rows.length < 2) return 0;
+  const count = Math.min(sources.length, rows.length);
+  const difference = Math.abs(sources.length - rows.length);
+  if (difference > Math.max(2, Math.ceil(sources.length * 0.15))) {
+    writeSystemLog("warn", "docchi", "Skipped full Docchi plan persistence because TMDB and Docchi episode counts differ too much.", { seriesId, sourceEpisodes: sources.length, docchiRows: rows.length, difference });
+    return 0;
+  }
+  for (let index = 0; index < count; index += 1) {
+    const source = sources[index];
+    const row = rows[index];
+    const parsed = source?.id ? parseEpisodeId(source.id) : undefined;
+    if (!source || !row || !parsed) continue;
+    saveDocchiEpisodeMapping({
+      originalId: source.id!,
+      seriesId,
+      sourceSeason: parsed.season,
+      sourceEpisode: parsed.episode,
+      mappedId: `${seriesId}:${row.season}:${row.episode}`,
+      mappedSeason: row.season,
+      mappedEpisode: row.episode,
+      docchiId: row.docchiId,
+      docchiTitle: row.docchiTitle,
+      matchMethod: `${matchMethod}:series-plan-order`,
+      confidence: 430
+    });
+  }
+  writeSystemLog("info", "docchi", "Persisted full Docchi series plan mappings by order.", { seriesId, sourceEpisodes: sources.length, docchiRows: rows.length, persisted: count, matchMethod });
+  return count;
 }
 
 function choosePlanRow(rows: DocchiPlanRow[], parsed: { season: number; episode: number }, sourceEpisode?: TmdbEpisode): PlanMatch | undefined {
