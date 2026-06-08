@@ -5,7 +5,7 @@ import { getAppSettings } from "../settings/app-settings.js";
 import { writeSystemLog } from "../system/system-log.js";
 import type { StreamType } from "../streams/types.js";
 import { fetchTmdbMeta } from "../tmdb/tmdb-client.js";
-import { saveDocchiEpisodeMappingFromFix } from "./docchi-episode-mapping-store.js";
+import { getDocchiEpisodeMappingByMappedId, saveDocchiEpisodeMappingFromFix } from "./docchi-episode-mapping-store.js";
 import { resolveKometaAnimeIds, type KometaAnimeIdsMatch } from "./kometa-anime-ids.js";
 
 export type DocchiEpisodeFix = {
@@ -30,7 +30,7 @@ type DocchiEpisodeFixDebug = {
   sourceEpisode?: TmdbEpisode;
   searchTerms: string[];
   addons: Array<{ id: string; name?: string; manifestUrl: string }>;
-  resolver: { source: "kometa-anime-ids" | "fallback:title-search" | "none"; kometa?: KometaAnimeIdsMatch; triedDocchiMetaIds?: string[]; fallbackUsed?: boolean };
+  resolver: { source: "kometa-anime-ids" | "fallback:title-search" | "persisted:mapped-id" | "none"; kometa?: KometaAnimeIdsMatch; triedDocchiMetaIds?: string[]; fallbackUsed?: boolean };
   plans: Array<{
     addonId: string;
     addonName?: string;
@@ -70,6 +70,20 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
   if (!parsed) return [];
   const docchiAddons = getEnabledDocchiAddons();
   if (!docchiAddons.length) return [];
+
+  const persisted = getDocchiEpisodeMappingByMappedId(id);
+  if (persisted?.docchiId) {
+    writeSystemLog("info", "docchi", "Using persisted Docchi mapping for mapped stream request.", {
+      requestedId: id,
+      originalId: persisted.originalId,
+      mappedId: persisted.mappedId,
+      docchiId: persisted.docchiId,
+      matchMethod: persisted.matchMethod,
+      confidence: persisted.confidence
+    });
+    return Promise.all(docchiAddons.map((addon) => fetchAddonStreamsWithLog(addon, "anime", persisted.docchiId, "persisted-mapped-stream-fetch")));
+  }
+
   const result = await findDocchiEpisodeFix(id, { addons: docchiAddons, force: false });
   const docchiId = result.docchiId;
   if (!result.fixed || !docchiId) return [];
