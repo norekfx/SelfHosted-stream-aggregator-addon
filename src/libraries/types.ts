@@ -64,6 +64,7 @@ export type StremioCatalogMeta = {
   id: string;
   type: LibraryMediaType;
   name: string;
+  tmdbId?: number;
   poster?: string;
   background?: string;
   description?: string;
