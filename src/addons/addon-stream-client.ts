@@ -80,6 +80,8 @@ export async function fetchAddonStreams(
 
 export function buildStreamUrl(manifestUrl: string, type: StreamType, id: string): string {
   const url = new URL(manifestUrl);
-  url.pathname = url.pathname.replace(/\/manifest\.json$/, `/stream/${encodeURIComponent(type)}/${encodeURIComponent(id)}.json`);
+  const encodedType = encodeURIComponent(type);
+  const encodedId = encodeURIComponent(id).replace(/%3A/gi, ":");
+  url.pathname = url.pathname.replace(/\/manifest\.json$/, `/stream/${encodedType}/${encodedId}.json`);
   return url.toString();
 }
