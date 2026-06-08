@@ -30,8 +30,8 @@ export function saveDocchiEpisodeMapping(mapping: Omit<PersistedDocchiEpisodeMap
     `)
     .run(createMappingKey(mapping.originalId), JSON.stringify(value), now);
 
-  invalidateMetadataCaches(mapping.seriesId);
-  writeSystemLog("info", "docchi", "Persisted Docchi episode mapping.", value);
+  const invalidated = invalidateMetadataCaches(mapping.seriesId);
+  writeSystemLog("info", "docchi", "Persisted Docchi episode mapping.", { ...value, invalidated });
 }
 
 export function saveDocchiEpisodeMappingFromFix(fix: {
@@ -95,12 +95,13 @@ export function listDocchiEpisodeMappingsForSeries(seriesId: string): PersistedD
   return mappings.sort((a, b) => a.sourceEpisode - b.sourceEpisode);
 }
 
-export function resetAllDocchiEpisodeMappings(): { deletedMappings: number; clearedMetaCache: number; clearedLibraryCache: number } {
+export function resetAllDocchiEpisodeMappings(): { deletedMappings: number; clearedMetaCache: number; clearedLibraryCache: number; clearedSearchCache: number } {
   const db = getDatabase();
   const deletedMappings = db.prepare("DELETE FROM app_settings WHERE key LIKE ?").run(`${KEY_PREFIX}%`).changes;
   const clearedMetaCache = db.prepare("DELETE FROM meta_cache WHERE type = 'series'").run().changes;
   const clearedLibraryCache = db.prepare("DELETE FROM library_cache").run().changes;
-  const result = { deletedMappings, clearedMetaCache, clearedLibraryCache };
+  const clearedSearchCache = db.prepare("DELETE FROM search_cache WHERE type = 'series'").run().changes;
+  const result = { deletedMappings, clearedMetaCache, clearedLibraryCache, clearedSearchCache };
   writeSystemLog("warn", "docchi", "Reset all persisted Docchi episode mappings and restored original TMDB/IMDb indexing.", result);
   return result;
 }
@@ -136,7 +137,10 @@ function parseEpisodeId(id: string): { seriesId: string; season: number; episode
   return { seriesId: match[1] ?? "", season, episode };
 }
 
-function invalidateMetadataCaches(seriesId: string): void {
-  getDatabase().prepare("DELETE FROM meta_cache WHERE type = 'series' AND imdb_id = ?").run(seriesId);
-  getDatabase().prepare("DELETE FROM library_cache").run();
+function invalidateMetadataCaches(seriesId: string): { metaCache: number; libraryCache: number; searchCache: number } {
+  const db = getDatabase();
+  const metaCache = db.prepare("DELETE FROM meta_cache WHERE type = 'series' AND imdb_id = ?").run(seriesId).changes;
+  const libraryCache = db.prepare("DELETE FROM library_cache").run().changes;
+  const searchCache = db.prepare("DELETE FROM search_cache WHERE type = 'series' AND media_id LIKE ?").run(`${seriesId}:%`).changes;
+  return { metaCache, libraryCache, searchCache };
 }
