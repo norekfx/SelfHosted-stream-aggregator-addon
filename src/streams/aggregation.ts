@@ -109,7 +109,19 @@ export async function aggregateStreams(
   await validateStreamsByMode(streams, rankingPreferences, validationMode, getEffectiveStreamValidationTimeoutMs());
 
   const rankedStreams = rankWorkingStreams(streams, rankingPreferences);
-  const selectedOriginal = selectBestOriginalStream(streams, rankingPreferences);
+  const strictSelectedOriginal = selectBestOriginalStream(streams, rankingPreferences);
+  const docchiFallbackOriginal = useDocchiOnly && !strictSelectedOriginal ? selectBestPlayableCandidate(streams, rankingPreferences) : null;
+  if (docchiFallbackOriginal) {
+    writeSystemLog("warn", "aggregation", "Docchi-only mode returned a stream candidate without strict working validation.", {
+      requestedId: id,
+      addonId: docchiFallbackOriginal.addonId,
+      addonName: docchiFallbackOriginal.addonName,
+      title: docchiFallbackOriginal.title ?? docchiFallbackOriginal.name,
+      validationStatus: docchiFallbackOriginal.validation.status,
+      validationReason: docchiFallbackOriginal.validation.reason
+    });
+  }
+  const selectedOriginal = strictSelectedOriginal ?? docchiFallbackOriginal;
 
   return {
     type,
@@ -144,6 +156,10 @@ function getDocchiOnlyReason(mode: string, mapping: EpisodeMappingSummary | unde
 
 function countDistinct(values: Array<number | undefined>): number {
   return new Set(values.filter((value): value is number => Number.isFinite(value))).size;
+}
+
+function selectBestPlayableCandidate(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string }): RankedStream | null {
+  return rankCandidateStreams(streams.filter((stream) => Boolean(stream.url || stream.externalUrl)), preferences)[0] ?? null;
 }
 
 function isStreamAddonEnabled(addon: RegisteredAddon): boolean {
