@@ -328,8 +328,8 @@ function buildPlanRows(anime: DocchiResolvedAnime[]): DocchiPlanRow[] {
     }
     episode += 1;
     row.absoluteIndex = index + 1;
-    row.season = row.season > 0 ? row.season : season;
-    row.episode = row.episode > 0 && row.season === season ? row.episode : episode;
+    row.season = season;
+    row.episode = episode;
     if (date) lastDate = date;
   }
   return deduped;
