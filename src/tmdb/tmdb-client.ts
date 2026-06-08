@@ -86,7 +86,7 @@ export async function fetchTmdbMeta(type: "movie" | "series", imdbId: string): P
     append_to_response: "videos,external_ids"
   }, settings);
 
-  const baseMeta = mapDetailToMeta(type, imdbId, detail);
+  const baseMeta = mapDetailToMeta(type, imdbId, tmdbId, detail);
   if (type === "series") {
     baseMeta.videos = await fetchSeriesVideos(tmdbId, imdbId, detail, settings);
   }
@@ -118,6 +118,7 @@ async function mapTmdbItemToMeta(library: Library, item: TmdbItem, settings: Ret
 
   return {
     id: imdbId,
+    tmdbId: item.id,
     type: library.type,
     name,
     poster: item.poster_path ? `${IMAGE_BASE_URL}/w500${item.poster_path}` : undefined,
@@ -129,13 +130,14 @@ async function mapTmdbItemToMeta(library: Library, item: TmdbItem, settings: Ret
   };
 }
 
-function mapDetailToMeta(type: "movie" | "series", imdbId: string, detail: TmdbDetail): StremioCatalogMeta {
+function mapDetailToMeta(type: "movie" | "series", imdbId: string, tmdbId: number, detail: TmdbDetail): StremioCatalogMeta {
   const releaseDate = type === "movie" ? detail.release_date : detail.first_air_date;
   const name = detail.title ?? detail.name ?? imdbId;
   const trailer = detail.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer");
   const runtime = type === "movie" ? detail.runtime : detail.episode_run_time?.[0];
   return {
     id: imdbId,
+    tmdbId,
     type,
     name,
     poster: detail.poster_path ? `${IMAGE_BASE_URL}/w500${detail.poster_path}` : undefined,
