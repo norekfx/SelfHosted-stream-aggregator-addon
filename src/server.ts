@@ -36,15 +36,16 @@ const app = Fastify({
 
 await app.register(cors, { origin: true });
 app.get("/app.js", async (_, reply) => {
-  const [mainScript, addonDeleteHelper, libraryEpisodeIdHelper, docchiPublicMappingHelper] = await Promise.all([
+  const [mainScript, addonDeleteHelper, libraryEpisodeIdHelper, docchiPublicMappingHelper, docchiDebugExportHelper] = await Promise.all([
     readFile(join(publicDir, "app.js"), "utf-8"),
     readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => ""),
     readFile(join(publicDir, "library-episode-id-helper.js"), "utf-8").catch(() => ""),
-    readFile(join(publicDir, "docchi-public-mapping-helper.js"), "utf-8").catch(() => "")
+    readFile(join(publicDir, "docchi-public-mapping-helper.js"), "utf-8").catch(() => ""),
+    readFile(join(publicDir, "docchi-debug-export-helper.js"), "utf-8").catch(() => "")
   ]);
   reply.header("cache-control", "no-store, max-age=0");
   reply.type("application/javascript; charset=utf-8");
-  return `${mainScript}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}\n\n${docchiPublicMappingHelper}`;
+  return `${mainScript}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}\n\n${docchiPublicMappingHelper}\n\n${docchiDebugExportHelper}`;
 });
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
