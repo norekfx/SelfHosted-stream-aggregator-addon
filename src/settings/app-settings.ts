@@ -6,6 +6,7 @@ export type LinkValidationMode = "best" | "all" | "5" | "10" | "20" | "40" | "80
 export type MetadataSyncIntervalMinutes = 0 | 10 | 30 | 60 | 120 | 240 | 480 | 720 | 1440;
 export type DocchiPublicMappingMode = "disabled" | "animation_series" | "series" | "all";
 export type DocchiKometaAnimeIdsRefreshInterval = "daily" | "weekly" | "biweekly" | "monthly" | "once";
+export type DocchiStreamForceMode = "enabled" | "disabled" | "partial";
 
 export type AppSettings = {
   preferredAudioLanguage: string;
@@ -32,6 +33,7 @@ export type AppSettings = {
   docchiPublicMappingMode: DocchiPublicMappingMode;
   docchiKometaAnimeIdsEnabled: boolean;
   docchiKometaAnimeIdsRefreshInterval: DocchiKometaAnimeIdsRefreshInterval;
+  docchiStreamForceMode: DocchiStreamForceMode;
   autoTranscodeMinQuality: string;
   autoTranscodeMaxQuality: string;
   transcodePreset: string;
@@ -50,6 +52,7 @@ export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80"
 export const METADATA_SYNC_INTERVALS = [0, 10, 30, 60, 120, 240, 480, 720, 1440] as const;
 export const DOCCHI_PUBLIC_MAPPING_MODES = ["disabled", "animation_series", "series", "all"] as const;
 export const DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS = ["daily", "weekly", "biweekly", "monthly", "once"] as const;
+export const DOCCHI_STREAM_FORCE_MODES = ["enabled", "disabled", "partial"] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
@@ -76,6 +79,7 @@ const defaults: AppSettings = {
   docchiPublicMappingMode: "disabled",
   docchiKometaAnimeIdsEnabled: false,
   docchiKometaAnimeIdsRefreshInterval: "daily",
+  docchiStreamForceMode: "partial",
   autoTranscodeMinQuality: "144p",
   autoTranscodeMaxQuality: "1080p",
   transcodePreset: "veryfast",
@@ -205,6 +209,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.debridPlaceholderCompareDeclaredSize = normalized.debridPlaceholderCompareDeclaredSize === true;
   normalized.docchiKometaAnimeIdsEnabled = normalized.docchiKometaAnimeIdsEnabled === true;
   normalized.docchiKometaAnimeIdsRefreshInterval = DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS.includes(normalized.docchiKometaAnimeIdsRefreshInterval as DocchiKometaAnimeIdsRefreshInterval) ? normalized.docchiKometaAnimeIdsRefreshInterval : defaults.docchiKometaAnimeIdsRefreshInterval;
+  normalized.docchiStreamForceMode = DOCCHI_STREAM_FORCE_MODES.includes(normalized.docchiStreamForceMode as DocchiStreamForceMode) ? normalized.docchiStreamForceMode : defaults.docchiStreamForceMode;
   normalized.tmdbApiKey = normalized.tmdbApiKey?.trim() || undefined;
   normalized.tmdbReadAccessToken = normalized.tmdbReadAccessToken?.trim() || undefined;
   normalized.tmdbLanguage = normalized.tmdbLanguage?.trim() || defaults.tmdbLanguage;
