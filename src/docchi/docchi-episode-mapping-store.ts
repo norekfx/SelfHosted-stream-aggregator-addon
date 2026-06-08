@@ -95,6 +95,16 @@ export function listDocchiEpisodeMappingsForSeries(seriesId: string): PersistedD
   return mappings.sort((a, b) => a.sourceEpisode - b.sourceEpisode);
 }
 
+export function resetAllDocchiEpisodeMappings(): { deletedMappings: number; clearedMetaCache: number; clearedLibraryCache: number } {
+  const db = getDatabase();
+  const deletedMappings = db.prepare("DELETE FROM app_settings WHERE key LIKE ?").run(`${KEY_PREFIX}%`).changes;
+  const clearedMetaCache = db.prepare("DELETE FROM meta_cache WHERE type = 'series'").run().changes;
+  const clearedLibraryCache = db.prepare("DELETE FROM library_cache").run().changes;
+  const result = { deletedMappings, clearedMetaCache, clearedLibraryCache };
+  writeSystemLog("warn", "docchi", "Reset all persisted Docchi episode mappings and restored original TMDB/IMDb indexing.", result);
+  return result;
+}
+
 export function applyPersistedDocchiMappingsToMeta(meta: StremioCatalogMeta): StremioCatalogMeta {
   if (meta.type !== "series" || !meta.videos?.length) return meta;
   const mappings = listDocchiEpisodeMappingsForSeries(meta.id);
