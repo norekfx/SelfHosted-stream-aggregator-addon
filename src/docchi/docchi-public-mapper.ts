@@ -22,6 +22,22 @@ export type DocchiEpisodeFix = {
   mappedEpisode?: number;
   matchMethod?: string;
   confidence?: number;
+  debug?: DocchiEpisodeFixDebug;
+};
+
+type DocchiEpisodeFixDebug = {
+  sourceEpisode?: TmdbEpisode;
+  searchTerms: string[];
+  addons: Array<{ id: string; name?: string; manifestUrl: string }>;
+  plans: Array<{
+    addonId: string;
+    addonName?: string;
+    anime: Array<{ id: string; name?: string; releaseInfo?: string; year?: number; seasonHint?: number; episodeCount: number }>;
+    seasons: Array<{ season: number; episodes: number; firstDate?: string; lastDate?: string }>;
+    rows: Array<{ docchiId: string; title?: string; released?: string; season: number; episode: number; absoluteIndex: number; animeName?: string }>;
+    candidates?: PlanMatchCandidate[];
+  }>;
+  decision?: string;
 };
 
 type DocchiMetaPreview = { id?: string; name?: string; type?: string; releaseInfo?: string };
@@ -40,6 +56,22 @@ type DocchiPlanRow = {
   sourceEpisode?: number;
 };
 type DocchiSeriesPlan = { rows: DocchiPlanRow[]; anime: DocchiResolvedAnime[] };
+type PlanMatchCandidate = {
+  docchiId: string;
+  title?: string;
+  released?: string;
+  season: number;
+  episode: number;
+  absoluteIndex: number;
+  score: number;
+  dateScore: number;
+  titleScore: number;
+  sameOriginalIndex: boolean;
+  sameSeasonEpisode: boolean;
+  method: string;
+  rejected?: string;
+};
+type PlanMatch = { row: DocchiPlanRow; method: string; confidence: number; candidates: PlanMatchCandidate[] };
 
 const cache = new Map<string, DocchiEpisodeFix>();
 const searchCache = new Map<string, DocchiMetaPreview[]>();
@@ -92,6 +124,12 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
   const tmdbMeta = await fetchTmdbMeta("series", parsed.seriesId).catch(() => null);
   const sourceEpisode = findTmdbEpisode(tmdbMeta?.videos, parsed.season, parsed.episode);
   const searchTerms = buildSearchTerms(tmdbMeta?.name ?? parsed.seriesId);
+  const debug: DocchiEpisodeFixDebug = {
+    sourceEpisode,
+    searchTerms,
+    addons: addons.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl })),
+    plans: []
+  };
 
   writeSystemLog("info", "docchi", forced ? "Docchi force plan mapping started." : "Docchi plan mapping started.", {
     originalId,
@@ -104,15 +142,24 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
   for (const addon of addons) {
     const plan = await buildDocchiSeriesPlan(addon, parsed.seriesId, searchTerms, forced ? 16 : 10);
     const match = choosePlanRow(plan.rows, parsed, sourceEpisode);
+    debug.plans.push({
+      addonId: addon.id,
+      addonName: addon.name,
+      anime: plan.anime.map((item) => ({ id: item.id, name: item.name, releaseInfo: item.releaseInfo, year: item.year, seasonHint: item.seasonHint, episodeCount: item.episodeCount })),
+      seasons: summarizePlanSeasons(plan.rows),
+      rows: plan.rows.map((row) => ({ docchiId: row.docchiId, title: row.docchiTitle, released: row.released, season: row.season, episode: row.episode, absoluteIndex: row.absoluteIndex, animeName: row.docchiAnimeName })),
+      candidates: match?.candidates
+    });
     writeSystemLog(match ? "info" : "warn", "docchi", "Docchi plan match result.", {
       originalId,
       planRows: plan.rows.length,
       anime: plan.anime.map((item) => ({ id: item.id, name: item.name, episodeCount: item.episodeCount, year: item.year, seasonHint: item.seasonHint })),
-      match: match ? { docchiId: match.row.docchiId, title: match.row.docchiTitle, season: match.row.season, episode: match.row.episode, method: match.method, confidence: match.confidence } : undefined
+      match: match ? { docchiId: match.row.docchiId, title: match.row.docchiTitle, season: match.row.season, episode: match.row.episode, method: match.method, confidence: match.confidence, candidates: match.candidates.slice(0, 6) } : undefined
     });
     if (!match) continue;
 
     const mappedId = `${parsed.seriesId}:${match.row.season}:${match.row.episode}`;
+    debug.decision = `accepted:${match.method}:${match.confidence}`;
     const fix: DocchiEpisodeFix = {
       originalId,
       mappedId,
@@ -127,16 +174,18 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
       mappedSeason: match.row.season,
       mappedEpisode: match.row.episode,
       matchMethod: match.method,
-      confidence: match.confidence
+      confidence: match.confidence,
+      debug
     };
     cache.set(originalId, fix);
     saveDocchiEpisodeMappingFromFix(fix);
     return fix;
   }
 
-  const miss = { ...fallback, triedIds: [] };
+  debug.decision = "rejected:no-confident-match";
+  const miss = { ...fallback, triedIds: [], debug };
   cache.set(originalId, miss);
-  writeSystemLog("warn", "docchi", forced ? "Docchi force plan mapping did not find a match." : "Docchi plan mapping did not find a match.", miss);
+  writeSystemLog("warn", "docchi", forced ? "Docchi force plan mapping did not find a confident match." : "Docchi plan mapping did not find a confident match.", miss);
   return miss;
 }
 
@@ -293,31 +342,31 @@ function toPlanRow(anime: DocchiResolvedAnime, video: DocchiVideo, fallbackEpiso
   return { docchiId, docchiTitle: video.title, docchiAnimeId: anime.id, docchiAnimeName: anime.name, released: video.released, absoluteIndex: fallbackEpisode, season: Number(video.season) || 0, episode: sourceEpisode, sourceEpisode };
 }
 
-function choosePlanRow(rows: DocchiPlanRow[], parsed: { season: number; episode: number }, sourceEpisode?: TmdbEpisode): { row: DocchiPlanRow; method: string; confidence: number } | undefined {
+function choosePlanRow(rows: DocchiPlanRow[], parsed: { season: number; episode: number }, sourceEpisode?: TmdbEpisode): PlanMatch | undefined {
   if (!rows.length) return undefined;
   const sourceDate = parseDate(sourceEpisode?.released);
   const sourceTitle = normalizeTitle(sourceEpisode?.title);
-  const scored = rows.map((row) => {
-    let score = 0;
+  const candidates = rows.map((row) => {
+    let dateScore = 0;
     const rowDate = parseDate(row.released);
     if (sourceDate && rowDate) {
       const diffDays = Math.abs(Math.round((rowDate.getTime() - sourceDate.getTime()) / 86_400_000));
-      if (diffDays === 0) score += 1000;
-      else if (diffDays <= 2) score += 850;
-      else if (diffDays <= 14) score += 250;
+      if (diffDays === 0) dateScore = 1000;
+      else if (diffDays <= 2) dateScore = 850;
+      else if (diffDays <= 14) dateScore = 250;
     }
     const titleScore = sourceTitle ? titleSimilarity(sourceTitle, normalizeTitle(row.docchiTitle)) : 0;
-    score += Math.round(titleScore * 500);
-    if (row.absoluteIndex === parsed.episode) score += 350;
-    if (row.season === parsed.season && row.episode === parsed.episode) score += 80;
-    return { row, score, titleScore };
+    const sameOriginalIndex = row.absoluteIndex === parsed.episode;
+    const sameSeasonEpisode = row.season === parsed.season && row.episode === parsed.episode;
+    const score = dateScore + Math.round(titleScore * 500) + (sameOriginalIndex ? 350 : 0) + (sameSeasonEpisode ? 80 : 0);
+    const method = dateScore >= 850 ? "date" : titleScore >= 0.65 ? "title" : dateScore >= 250 && titleScore >= 0.35 ? "date-title" : sameOriginalIndex && score >= 430 ? "absolute-order-guarded" : "low-confidence";
+    const rejected = method === "low-confidence" ? "No strong date/title evidence and absolute order was not guarded by season/episode consistency." : undefined;
+    return { row, docchiId: row.docchiId, title: row.docchiTitle, released: row.released, season: row.season, episode: row.episode, absoluteIndex: row.absoluteIndex, score, dateScore, titleScore, sameOriginalIndex, sameSeasonEpisode, method, rejected };
   }).sort((a, b) => b.score - a.score);
 
-  const best = scored[0];
-  if (!best) return undefined;
-  const method = best.score >= 900 ? "date" : best.titleScore >= 0.65 ? "title" : best.row.absoluteIndex === parsed.episode ? "absolute-order" : "low-confidence";
-  if (method === "low-confidence" && best.score < 250) return undefined;
-  return { row: best.row, method, confidence: best.score };
+  const best = candidates[0];
+  if (!best || best.method === "low-confidence") return undefined;
+  return { row: best.row, method: best.method, confidence: best.score, candidates: candidates.slice(0, 12).map(({ row, ...candidate }) => candidate) };
 }
 
 function findTmdbEpisode(videos: TmdbEpisode[] | undefined, season: number, episode: number): TmdbEpisode | undefined {
