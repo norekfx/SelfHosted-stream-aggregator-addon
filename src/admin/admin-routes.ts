@@ -7,7 +7,7 @@ import { getKometaAnimeIdsStatus, syncKometaAnimeIds } from "../docchi/kometa-an
 import { clearLibraryCache } from "../libraries/library-cache.js";
 import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import { DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS, DOCCHI_PUBLIC_MAPPING_MODES, getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
+import { DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS, DOCCHI_PUBLIC_MAPPING_MODES, DOCCHI_STREAM_FORCE_MODES, getAppSettings, getEffectivePublicBaseUrl, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getCachedSearchResult, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
 import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
@@ -79,6 +79,7 @@ const settingsSchema = z.object({
   docchiPublicMappingMode: z.enum(DOCCHI_PUBLIC_MAPPING_MODES).optional(),
   docchiKometaAnimeIdsEnabled: z.boolean().optional(),
   docchiKometaAnimeIdsRefreshInterval: z.enum(DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS).optional(),
+  docchiStreamForceMode: z.enum(DOCCHI_STREAM_FORCE_MODES).optional(),
   autoTranscodeMinQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   autoTranscodeMaxQuality: z.enum(TRANSCODE_QUALITY_ORDER).optional(),
   transcodePreset: z.enum(TRANSCODE_PRESETS).optional(),
