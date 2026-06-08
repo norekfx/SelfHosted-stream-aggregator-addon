@@ -10,7 +10,7 @@ import { registerAuthRoutes, requireAdminAuth } from "./auth/auth-routes.js";
 import { env } from "./config/env.js";
 import { getDatabase } from "./db/database.js";
 import { runMigrations } from "./db/migrations.js";
-import { applyPersistedDocchiMappingsToMeta } from "./docchi/docchi-episode-mapping-store.js";
+import { applyPersistedDocchiMappingsToMeta, listDocchiEpisodeMappingsForSeries } from "./docchi/docchi-episode-mapping-store.js";
 import { findDocchiEpisodeFix } from "./docchi/docchi-public-mapper.js";
 import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shouldBypassMetadataCache } from "./libraries/library-cache.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
@@ -58,6 +58,23 @@ await app.register(async (adminApp) => {
       return { error: "Invalid episode id." };
     }
     return { fix: await findDocchiEpisodeFix(params.data.id) };
+  });
+  adminApp.get<{ Params: { id: string } }>("/admin/docchi/series/:id/status", async (request, reply) => {
+    const params = z.object({ id: z.string().regex(/^tt\d+$/i) }).safeParse(request.params);
+    if (!params.success) {
+      reply.code(400);
+      return { error: "Invalid series id." };
+    }
+    const mappings = listDocchiEpisodeMappingsForSeries(params.data.id);
+    const mappedSeasons = Array.from(new Set(mappings.map((mapping) => mapping.mappedSeason))).sort((a, b) => a - b);
+    const latestUpdatedAt = mappings.map((mapping) => mapping.updatedAt).sort().at(-1);
+    return {
+      seriesId: params.data.id,
+      fixed: mappings.length > 0,
+      mappedCount: mappings.length,
+      mappedSeasons,
+      latestUpdatedAt
+    };
   });
 });
 await app.register(registerTranscodeRoutes);
