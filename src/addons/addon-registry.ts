@@ -26,6 +26,8 @@ export type DeleteAddonResult =
   | { status: "enabled"; addon: RegisteredAddon }
   | { status: "not_found" };
 
+const DOCCHI_DETECTION_HINT = "Docchi-compatible anime stream";
+
 export async function registerAddon(input: AddonRegistrationInput): Promise<RegisteredAddon> {
   const manifestUrl = normalizeManifestUrl(input.manifestUrl);
   const existing = findAddonByManifestUrl(manifestUrl);
@@ -37,15 +39,17 @@ export async function registerAddon(input: AddonRegistrationInput): Promise<Regi
   const now = new Date().toISOString();
   const health = await checkAddonHealth(manifestUrl);
   const manifest = health.manifest;
+  const supportedResources = manifest ? extractSupportedResources(manifest) : [];
+  const supportedTypes = manifest ? extractSupportedTypes(manifest) : [];
 
   const addon: RegisteredAddon = {
     id: randomUUID(),
     manifestUrl,
     name: manifest?.name,
     version: manifest?.version,
-    description: manifest?.description,
-    supportedResources: manifest ? extractSupportedResources(manifest) : [],
-    supportedTypes: manifest?.types ?? [],
+    description: applyDocchiDetectionHint(manifest?.description, supportedResources, supportedTypes, manifest?.idPrefixes),
+    supportedResources,
+    supportedTypes,
     status: health.status,
     enabled: input.enabled ?? true,
     createdAt: now,
@@ -84,14 +88,16 @@ export async function refreshAddonHealth(addonId: string): Promise<RegisteredAdd
   const health = await checkAddonHealth(addon.manifestUrl);
   const manifest = health.manifest;
   const now = new Date().toISOString();
+  const supportedResources = manifest ? extractSupportedResources(manifest) : addon.supportedResources;
+  const supportedTypes = manifest ? extractSupportedTypes(manifest) : addon.supportedTypes;
 
   const updated: RegisteredAddon = {
     ...addon,
     name: manifest?.name ?? addon.name,
     version: manifest?.version ?? addon.version,
-    description: manifest?.description ?? addon.description,
-    supportedResources: manifest ? extractSupportedResources(manifest) : addon.supportedResources,
-    supportedTypes: manifest?.types ?? addon.supportedTypes,
+    description: applyDocchiDetectionHint(manifest?.description ?? addon.description, supportedResources, supportedTypes, manifest?.idPrefixes),
+    supportedResources,
+    supportedTypes,
     status: health.status,
     updatedAt: now,
     lastCheckedAt: now,
@@ -214,14 +220,16 @@ function updateAddon(addon: RegisteredAddon): void {
 }
 
 function mapAddonRow(row: AddonRow): RegisteredAddon {
+  const supportedResources = parseJsonArray<AddonResource>(row.supported_resources_json);
+  const supportedTypes = parseJsonArray<string>(row.supported_types_json);
   return {
     id: row.id,
     manifestUrl: row.manifest_url,
     name: row.name ?? undefined,
     version: row.version ?? undefined,
-    description: row.description ?? undefined,
-    supportedResources: parseJsonArray<AddonResource>(row.supported_resources_json),
-    supportedTypes: parseJsonArray<string>(row.supported_types_json),
+    description: applyDocchiDetectionHint(row.description ?? undefined, supportedResources, supportedTypes),
+    supportedResources,
+    supportedTypes,
     status: row.status,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
@@ -252,4 +260,27 @@ function extractSupportedResources(manifest: ExternalAddonManifest): AddonResour
   }
 
   return Array.from(supported);
+}
+
+function extractSupportedTypes(manifest: ExternalAddonManifest): string[] {
+  const supported = new Set<string>();
+  for (const type of manifest.types ?? []) {
+    if (typeof type === "string" && type.trim()) supported.add(type.trim());
+  }
+  for (const resource of manifest.resources ?? []) {
+    if (typeof resource === "string") continue;
+    for (const type of resource.types ?? []) {
+      if (typeof type === "string" && type.trim()) supported.add(type.trim());
+    }
+  }
+  return Array.from(supported);
+}
+
+function applyDocchiDetectionHint(description: string | undefined, supportedResources: string[], supportedTypes: string[], idPrefixes: string[] = []): string | undefined {
+  const text = description ?? "";
+  if (/docc?h?i/i.test(text) || text.includes(DOCCHI_DETECTION_HINT)) return description;
+  const hasAnimeStream = supportedResources.includes("stream") && supportedTypes.some((type) => /^(anime|mal|kitsu)$/i.test(type));
+  const hasAnimePrefix = idPrefixes.some((prefix) => /^(mal|kitsu)$/i.test(prefix));
+  if (!hasAnimeStream && !hasAnimePrefix) return description;
+  return text ? `${text} ${DOCCHI_DETECTION_HINT}` : DOCCHI_DETECTION_HINT;
 }
