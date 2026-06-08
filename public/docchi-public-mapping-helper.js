@@ -31,13 +31,18 @@
           <label>Status Docchi<input id="docchiDetectedStatus" readonly value="Sprawdzanie..." /></label>
         </div>
         <p class="hint">Domyślnie wyłączone. Nasz addon wykrywa zainstalowany i włączony Docchi po nazwie/opisie/URL manifestu. Publiczny Docchi nie gwarantuje mapowania IMDb, dlatego tryb jest eksperymentalny.</p>
-        <button class="primary-btn" type="submit">Zapisz ustawienia Docchi</button>
+        <div class="action-row">
+          <button class="primary-btn" type="submit">Zapisz ustawienia Docchi</button>
+          <button id="restoreDocchiOriginalIndexesBtn" class="small-btn danger" type="button">Cofnij indeksy Docchi do TMDB/IMDb</button>
+        </div>
+        <p class="hint">Cofnięcie usuwa wszystkie zapisane mapowania Docchi i czyści cache metadanych oraz bibliotek. Po tym Stremio/Nuvio dostają ponownie oryginalne ID sezonów/odcinków z TMDB/IMDb.</p>
       </form>
     `;
     const firstPanel = settings.querySelector('.panel');
     if (firstPanel) firstPanel.before(panel); else settings.prepend(panel);
     panel.querySelector('#refreshDocchiStatusBtn')?.addEventListener('click', refreshDocchiStatus);
     panel.querySelector('#docchiPublicMappingForm')?.addEventListener('submit', saveDocchiSettings);
+    panel.querySelector('#restoreDocchiOriginalIndexesBtn')?.addEventListener('click', restoreDocchiOriginalIndexes);
   }
 
   function injectLibraryCreateControl() {
@@ -65,6 +70,19 @@
         body: { docchiPublicMappingMode: value('#docchiPublicMappingMode') || 'disabled' }
       });
       showToast('Ustawienia Docchi zapisane.');
+      await refreshDocchiStatus();
+    });
+  }
+
+  async function restoreDocchiOriginalIndexes(event) {
+    const button = event.currentTarget;
+    const confirmed = confirm('Cofnąć wszystkie indeksy Docchi do oryginalnego TMDB/IMDb?\n\nTo usunie zapisane mapowania Docchi i wyczyści cache metadanych oraz bibliotek.');
+    if (!confirmed) return;
+    await runButton(button, 'Cofam...', async () => {
+      const data = await apiRequest('/admin/docchi/restore-original-indexes', { method: 'POST' });
+      const reset = data.reset || {};
+      showToast(`Cofnięto Docchi: mapowania ${reset.deletedMappings || 0}, meta cache ${reset.clearedMetaCache || 0}, library cache ${reset.clearedLibraryCache || 0}.`);
+      document.querySelector('#reloadLibrariesBtn')?.click();
       await refreshDocchiStatus();
     });
   }
