@@ -30,7 +30,7 @@ type DocchiEpisodeFixDebug = {
   sourceEpisode?: TmdbEpisode;
   searchTerms: string[];
   addons: Array<{ id: string; name?: string; manifestUrl: string }>;
-  resolver: { source: "kometa-anime-ids" | "fallback:title-search" | "persisted:mapped-id" | "none"; kometa?: KometaAnimeIdsMatch; triedDocchiMetaIds?: string[]; fallbackUsed?: boolean };
+  resolver: { source: "kometa-anime-ids" | "fallback:title-search" | "persisted:mapped-id" | "none"; kometa?: KometaAnimeIdsMatch; triedDocchiMetaIds?: string[]; fallbackUsed?: boolean; tmdbShowId?: number };
   plans: Array<{
     addonId: string;
     addonName?: string;
@@ -46,6 +46,7 @@ type DocchiMetaPreview = { id?: string; name?: string; type?: string; releaseInf
 type DocchiVideo = { id?: string; title?: string; episode?: number; released?: string; overview?: string; available?: boolean; season?: number };
 type DocchiResolvedAnime = { id: string; name?: string; releaseInfo?: string; year?: number; seasonHint?: number; episodeCount: number; videos: DocchiVideo[] };
 type TmdbEpisode = { title?: string; released?: string; season?: number; episode?: number };
+type TmdbMeta = { name?: string; tmdbId?: number; videos?: TmdbEpisode[] };
 type DocchiPlanRow = { docchiId: string; docchiTitle?: string; docchiAnimeId: string; docchiAnimeName?: string; released?: string; absoluteIndex: number; season: number; episode: number; sourceEpisode?: number };
 type DocchiSeriesPlan = { rows: DocchiPlanRow[]; anime: DocchiResolvedAnime[]; resolverSource: DocchiEpisodeFixDebug["resolver"] };
 type PlanMatchCandidate = { docchiId: string; title?: string; released?: string; season: number; episode: number; absoluteIndex: number; score: number; dateScore: number; titleScore: number; sameOriginalIndex: boolean; sameSeasonEpisode: boolean; method: string; rejected?: string };
@@ -100,15 +101,15 @@ export async function findDocchiEpisodeFix(originalId: string, options: { addons
   const fallback: DocchiEpisodeFix = { originalId, mappedId: originalId, fixed: false, forced, triedIds: [], streamCount: 0 };
   if (!parsed || !addons.length || (!forced && !isDocchiMappingGloballyEnabled())) return fallback;
 
-  const tmdbMeta = await fetchTmdbMeta("series", parsed.seriesId).catch(() => null);
+  const tmdbMeta = await fetchTmdbMeta("series", parsed.seriesId).catch(() => null) as TmdbMeta | null;
   const sourceEpisode = findTmdbEpisode(tmdbMeta?.videos, parsed.season, parsed.episode);
   const searchTerms = buildSearchTerms(tmdbMeta?.name ?? parsed.seriesId);
-  const debug: DocchiEpisodeFixDebug = { sourceEpisode, searchTerms, addons: addons.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl })), resolver: { source: "none" }, plans: [] };
+  const debug: DocchiEpisodeFixDebug = { sourceEpisode, searchTerms, addons: addons.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl })), resolver: { source: "none", tmdbShowId: tmdbMeta?.tmdbId }, plans: [] };
 
-  writeSystemLog("info", "docchi", forced ? "Docchi force plan mapping started." : "Docchi plan mapping started.", { originalId, sourceEpisode, searchTerms, addonCount: addons.length, forced });
+  writeSystemLog("info", "docchi", forced ? "Docchi force plan mapping started." : "Docchi plan mapping started.", { originalId, sourceEpisode, searchTerms, tmdbShowId: tmdbMeta?.tmdbId, addonCount: addons.length, forced });
 
   for (const addon of addons) {
-    const plan = await buildDocchiSeriesPlan(addon, parsed.seriesId, searchTerms, forced ? 16 : 10);
+    const plan = await buildDocchiSeriesPlan(addon, parsed.seriesId, searchTerms, forced ? 16 : 10, tmdbMeta?.tmdbId);
     debug.resolver = plan.resolverSource;
     const match = choosePlanRow(plan.rows, parsed, sourceEpisode);
     debug.plans.push({ addonId: addon.id, addonName: addon.name, anime: plan.anime.map((item) => ({ id: item.id, name: item.name, releaseInfo: item.releaseInfo, year: item.year, seasonHint: item.seasonHint, episodeCount: item.episodeCount })), seasons: summarizePlanSeasons(plan.rows), rows: plan.rows.map((row) => ({ docchiId: row.docchiId, title: row.docchiTitle, released: row.released, season: row.season, episode: row.episode, absoluteIndex: row.absoluteIndex, animeName: row.docchiAnimeName })), candidates: match?.candidates });
@@ -139,20 +140,20 @@ export async function forceDocchiEpisodeFixes(ids: string[]): Promise<DocchiEpis
   return fixes;
 }
 
-async function buildDocchiSeriesPlan(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number): Promise<DocchiSeriesPlan> {
-  const cacheKey = `${addon.manifestUrl}|${seriesId}|${searchTerms.join("|")}|${limit}|kometa`;
+async function buildDocchiSeriesPlan(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number, tmdbShowId?: number): Promise<DocchiSeriesPlan> {
+  const cacheKey = `${addon.manifestUrl}|${seriesId}|${tmdbShowId ?? ""}|${searchTerms.join("|")}|${limit}|kometa`;
   const cached = planCache.get(cacheKey);
   if (cached) return cached;
-  const resolver = await resolveDocchiAnime(addon, seriesId, searchTerms, limit);
+  const resolver = await resolveDocchiAnime(addon, seriesId, searchTerms, limit, tmdbShowId);
   const rows = buildPlanRows(resolver.anime);
   const plan = { rows, anime: resolver.anime, resolverSource: resolver.resolver };
   planCache.set(cacheKey, plan);
-  writeSystemLog("info", "docchi", "Docchi series episode plan built.", { seriesId, searchTerms, resolver: resolver.resolver, animeCount: resolver.anime.length, rowCount: rows.length, seasons: summarizePlanSeasons(rows), sampleRows: rows.slice(0, 12).map((row) => ({ docchiId: row.docchiId, title: row.docchiTitle, released: row.released, season: row.season, episode: row.episode, absoluteIndex: row.absoluteIndex })) });
+  writeSystemLog("info", "docchi", "Docchi series episode plan built.", { seriesId, tmdbShowId, searchTerms, resolver: resolver.resolver, animeCount: resolver.anime.length, rowCount: rows.length, seasons: summarizePlanSeasons(rows), sampleRows: rows.slice(0, 12).map((row) => ({ docchiId: row.docchiId, title: row.docchiTitle, released: row.released, season: row.season, episode: row.episode, absoluteIndex: row.absoluteIndex })) });
   return plan;
 }
 
-async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number): Promise<{ anime: DocchiResolvedAnime[]; resolver: DocchiEpisodeFixDebug["resolver"] }> {
-  const kometa = await resolveKometaAnimeIds({ imdbId: seriesId });
+async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number, tmdbShowId?: number): Promise<{ anime: DocchiResolvedAnime[]; resolver: DocchiEpisodeFixDebug["resolver"] }> {
+  const kometa = await resolveKometaAnimeIds({ imdbId: seriesId, tmdbShowId });
   const triedDocchiMetaIds: string[] = [];
   if (kometa?.malIds.length) {
     const anime: DocchiResolvedAnime[] = [];
@@ -162,11 +163,11 @@ async function resolveDocchiAnime(addon: RegisteredAddon, seriesId: string, sear
       const full = await fetchDocchiMeta(addon, docchiMetaId);
       if (full && full.episodeCount > 1) anime.push(full);
     }
-    if (anime.length) return { anime: sortResolvedAnime(anime), resolver: { source: "kometa-anime-ids", kometa, triedDocchiMetaIds, fallbackUsed: false } };
-    writeSystemLog("warn", "docchi", "Kometa Anime-IDs matched series, but Docchi meta lookup returned no usable anime. Falling back to title search.", { seriesId, kometa, triedDocchiMetaIds });
+    if (anime.length) return { anime: sortResolvedAnime(anime), resolver: { source: "kometa-anime-ids", kometa, triedDocchiMetaIds, fallbackUsed: false, tmdbShowId } };
+    writeSystemLog("warn", "docchi", "Kometa Anime-IDs matched series, but Docchi meta lookup returned no usable anime. Falling back to title search.", { seriesId, tmdbShowId, kometa, triedDocchiMetaIds });
   }
   const fallbackAnime = await resolveDocchiAnimeByTitle(addon, seriesId, searchTerms, limit);
-  return { anime: fallbackAnime, resolver: { source: "fallback:title-search", kometa, triedDocchiMetaIds, fallbackUsed: true } };
+  return { anime: fallbackAnime, resolver: { source: "fallback:title-search", kometa, triedDocchiMetaIds, fallbackUsed: true, tmdbShowId } };
 }
 
 async function resolveDocchiAnimeByTitle(addon: RegisteredAddon, seriesId: string, searchTerms: string[], limit: number): Promise<DocchiResolvedAnime[]> {
