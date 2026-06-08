@@ -13,12 +13,17 @@
     ['once', 'Tylko raz']
   ];
   const LIBRARY_MODES = [['inherit', 'Dziedzicz globalne'], ...MODES];
+  let settingsLoaded = false;
+  let statusRefreshInProgress = false;
 
   async function initDocchiPanel() {
     injectDocchiSettingsPanel();
     injectLibraryCreateControl();
+    if (!settingsLoaded) {
+      await loadDocchiSettings();
+      settingsLoaded = true;
+    }
     await refreshDocchiStatus();
-    await loadDocchiSettings();
     decorateAddonRows();
     decorateLibraryRows();
   }
@@ -38,6 +43,8 @@
           <label>Status Docchi<input id="docchiDetectedStatus" readonly value="Sprawdzanie..." /></label>
           <label>Kometa Anime-IDs<select id="docchiKometaAnimeIdsEnabled"><option value="false">Wyłączone</option><option value="true">Włączone</option></select></label>
           <label>Pobieranie Kometa Anime-IDs<select id="docchiKometaAnimeIdsRefreshInterval">${KOMETA_INTERVALS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
+          <label>Status Kometa<input id="docchiKometaStatus" readonly value="Nie sprawdzono" /></label>
+          <label>Akcja Kometa<button id="syncKometaAnimeIdsBtn" class="small-btn" type="button">Pobierz teraz</button></label>
         </div>
         <p class="hint">Kometa Anime-IDs, gdy jest włączone, próbuje znaleźć MAL ID po IMDb/TMDB i pyta Docchi bezpośrednio o właściwe anime. Gdy identyfikator nie zostanie znaleziony, addon wraca do starego search po tytule.</p>
         <p class="hint">Domyślnie wyłączone. Nasz addon wykrywa zainstalowany i włączony Docchi po nazwie/opisie/URL manifestu. Publiczny Docchi nie gwarantuje mapowania IMDb, dlatego tryb jest eksperymentalny.</p>
@@ -50,9 +57,10 @@
     `;
     const firstPanel = settings.querySelector('.panel');
     if (firstPanel) firstPanel.before(panel); else settings.prepend(panel);
-    panel.querySelector('#refreshDocchiStatusBtn')?.addEventListener('click', refreshDocchiStatus);
+    panel.querySelector('#refreshDocchiStatusBtn')?.addEventListener('click', async () => { settingsLoaded = false; await initDocchiPanel(); });
     panel.querySelector('#docchiPublicMappingForm')?.addEventListener('submit', saveDocchiSettings);
     panel.querySelector('#restoreDocchiOriginalIndexesBtn')?.addEventListener('click', restoreDocchiOriginalIndexes);
+    panel.querySelector('#syncKometaAnimeIdsBtn')?.addEventListener('click', syncKometaAnimeIds);
   }
 
   function injectLibraryCreateControl() {
@@ -71,6 +79,7 @@
       setValue('#docchiPublicMappingMode', settings.docchiPublicMappingMode || 'disabled');
       setValue('#docchiKometaAnimeIdsEnabled', String(settings.docchiKometaAnimeIdsEnabled === true));
       setValue('#docchiKometaAnimeIdsRefreshInterval', settings.docchiKometaAnimeIdsRefreshInterval || 'daily');
+      await refreshKometaStatus(data.kometa);
     } catch {}
   }
 
@@ -78,7 +87,7 @@
     event.preventDefault();
     const button = event.submitter;
     await runButton(button, 'Zapisuję...', async () => {
-      await apiRequest('/admin/settings', {
+      const data = await apiRequest('/admin/settings', {
         method: 'PATCH',
         body: {
           docchiPublicMappingMode: value('#docchiPublicMappingMode') || 'disabled',
@@ -86,8 +95,19 @@
           docchiKometaAnimeIdsRefreshInterval: value('#docchiKometaAnimeIdsRefreshInterval') || 'daily'
         }
       });
-      showToast('Ustawienia Docchi zapisane.');
+      applySettings(data.settings || {});
+      updateKometaStatusField(data.kometa);
+      showToast(data.kometa?.cached ? 'Ustawienia Docchi zapisane. Kometa Anime-IDs jest pobrana.' : 'Ustawienia Docchi zapisane. Kometa Anime-IDs nie została jeszcze pobrana.');
       await refreshDocchiStatus();
+    });
+  }
+
+  async function syncKometaAnimeIds(event) {
+    const button = event.currentTarget;
+    await runButton(button, 'Pobieram...', async () => {
+      const data = await apiRequest('/admin/docchi/kometa/sync', { method: 'POST' });
+      updateKometaStatusField(data.kometa);
+      showToast(data.kometa?.cached ? `Pobrano Kometa Anime-IDs: ${data.kometa.entries || 0} wpisów, ${data.kometa.sizeMb || 0} MB.` : 'Nie udało się pobrać Kometa Anime-IDs.');
     });
   }
 
@@ -105,19 +125,44 @@
   }
 
   async function refreshDocchiStatus() {
+    if (statusRefreshInProgress) return;
+    statusRefreshInProgress = true;
     try {
       const data = await apiRequest('/admin/docchi/status');
       const status = document.querySelector('#docchiDetectedStatus');
       if (status) status.value = data.enabled ? `Wykryto i włączono (${data.addons.length})` : data.detected ? `Wykryto, ale nie jest włączony online (${data.addons.length})` : 'Nie wykryto';
-      const kometaSelect = document.querySelector('#docchiKometaAnimeIdsEnabled');
-      const intervalSelect = document.querySelector('#docchiKometaAnimeIdsRefreshInterval');
-      if (kometaSelect) kometaSelect.disabled = !data.enabled;
-      if (intervalSelect) intervalSelect.disabled = !data.enabled;
       annotateDocchiAddonRows(data.addons || []);
+      await refreshKometaStatus();
     } catch {
       const status = document.querySelector('#docchiDetectedStatus');
       if (status) status.value = 'Nie udało się sprawdzić';
+    } finally {
+      statusRefreshInProgress = false;
     }
+  }
+
+  async function refreshKometaStatus(existing) {
+    try {
+      const data = existing ? { kometa: existing } : await apiRequest('/admin/docchi/kometa/status');
+      updateKometaStatusField(data.kometa);
+    } catch {
+      updateKometaStatusField(undefined);
+    }
+  }
+
+  function updateKometaStatusField(kometa) {
+    const status = document.querySelector('#docchiKometaStatus');
+    if (!status) return;
+    if (!kometa) { status.value = 'Nie udało się sprawdzić'; return; }
+    if (!kometa.cached) { status.value = kometa.enabled ? 'Włączone, nie pobrano' : 'Wyłączone, nie pobrano'; return; }
+    const fetched = kometa.fetchedAt ? new Date(kometa.fetchedAt).toLocaleString() : 'brak daty';
+    status.value = `${kometa.fresh ? 'OK' : 'Nieświeże'} · ${kometa.entries || 0} wpisów · ${kometa.sizeMb || 0} MB · ${fetched}`;
+  }
+
+  function applySettings(settings) {
+    setValue('#docchiPublicMappingMode', settings.docchiPublicMappingMode || 'disabled');
+    setValue('#docchiKometaAnimeIdsEnabled', String(settings.docchiKometaAnimeIdsEnabled === true));
+    setValue('#docchiKometaAnimeIdsRefreshInterval', settings.docchiKometaAnimeIdsRefreshInterval || 'daily');
   }
 
   function decorateAddonRows() {
@@ -222,5 +267,5 @@
   function showToast(message) { const el = document.querySelector('#toast'); if (!el) return; el.textContent = message; el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 3200); }
 
   initDocchiPanel();
-  setInterval(() => { initDocchiPanel(); patchLibraryFormSubmitPayload(); decorateAddonRows(); decorateLibraryRows(); }, 1200);
+  setInterval(() => { injectDocchiSettingsPanel(); injectLibraryCreateControl(); refreshDocchiStatus(); patchLibraryFormSubmitPayload(); decorateAddonRows(); decorateLibraryRows(); }, 5000);
 })();
