@@ -65,8 +65,21 @@ export async function aggregateStreams(
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
   const persistedDocchiMapping = type === "series" ? getDocchiEpisodeMappingByMappedId(id) : undefined;
   const regularAddonId = persistedDocchiMapping?.originalId ?? id;
-  if (persistedDocchiMapping && regularAddonId !== id) {
+  const docchiOnlyReason = getDocchiOnlyReason(settings.docchiStreamForceMode, persistedDocchiMapping);
+  const useDocchiOnly = Boolean(docchiOnlyReason);
+  if (useDocchiOnly) {
+    writeSystemLog("warn", "aggregation", "Docchi stream force mode skipped regular addons for mapped episode.", {
+      mode: settings.docchiStreamForceMode,
+      reason: docchiOnlyReason,
+      requestedId: id,
+      originalId: persistedDocchiMapping?.originalId,
+      mappedId: persistedDocchiMapping?.mappedId,
+      docchiId: persistedDocchiMapping?.docchiId,
+      skippedRegularAddons: activeAddons.length
+    });
+  } else if (persistedDocchiMapping && regularAddonId !== id) {
     writeSystemLog("info", "aggregation", "Using original TMDB/IMDb episode id for regular addons and mapped Docchi id for Docchi.", {
+      mode: settings.docchiStreamForceMode,
       requestedId: id,
       regularAddonId,
       docchiId: persistedDocchiMapping.docchiId,
@@ -76,7 +89,7 @@ export async function aggregateStreams(
   }
 
   const [regularAddonResults, docchiFixedResults] = await Promise.all([
-    Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, regularAddonId))),
+    useDocchiOnly ? Promise.resolve([] as AddonStreamFetchResult[]) : Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, regularAddonId))),
     fetchDocchiFixedStreams(type, id)
   ]);
   const addonResults = [...regularAddonResults, ...docchiFixedResults];
@@ -96,7 +109,7 @@ export async function aggregateStreams(
     type,
     id,
     searchedAt: new Date().toISOString(),
-    addonCount: activeAddons.length,
+    addonCount: useDocchiOnly ? docchiFixedResults.length : activeAddons.length,
     successfulAddonCount: addonResults.filter((result) => result.status === "fulfilled").length,
     failedAddonCount: addonResults.filter((result) => result.status === "rejected").length,
     streamCount: streams.length,
@@ -109,6 +122,13 @@ export async function aggregateStreams(
     rankedStreams,
     selectedOriginal
   };
+}
+
+function getDocchiOnlyReason(mode: string, mapping: { originalId: string; mappedId: string; docchiId?: string } | undefined): string | undefined {
+  if (!mapping?.docchiId) return undefined;
+  if (mode === "enabled") return "enabled";
+  if (mode === "partial" && mapping.originalId !== mapping.mappedId) return "partial:mapped-id-differs";
+  return undefined;
 }
 
 function isStreamAddonEnabled(addon: RegisteredAddon): boolean {
