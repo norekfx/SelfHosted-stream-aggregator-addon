@@ -23,6 +23,18 @@ export type KometaAnimeIdsMatch = {
   sizeMb?: number;
 };
 
+export type KometaAnimeIdsStatus = {
+  enabled: boolean;
+  cached: boolean;
+  fresh: boolean;
+  fetchedAt?: string;
+  ageMs?: number;
+  ttlMs: number | "once";
+  sizeMb?: number;
+  entries?: number;
+  sourceUrl: string;
+};
+
 type CachedPayload = {
   fetchedAt: string;
   sizeBytes: number;
@@ -30,13 +42,13 @@ type CachedPayload = {
 };
 
 const CACHE_KEY = "docchi_kometa_anime_ids_cache";
-const SOURCE_URL = "https://github.com/Kometa-Team/Anime-IDs/raw/master/anime_ids.json";
+const SOURCE_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json";
 let memoryCache: CachedPayload | undefined;
 
 export async function resolveKometaAnimeIds(input: { imdbId?: string; tmdbShowId?: number | string }): Promise<KometaAnimeIdsMatch | undefined> {
   const settings = getAppSettings();
   if (!settings.docchiKometaAnimeIdsEnabled) return undefined;
-  const payload = await getPayload();
+  const payload = await getPayload(false);
   if (!payload) return undefined;
   const imdbId = input.imdbId?.trim().toLowerCase();
   const tmdbShowId = input.tmdbShowId === undefined ? undefined : String(input.tmdbShowId).trim();
@@ -49,10 +61,37 @@ export async function resolveKometaAnimeIds(input: { imdbId?: string; tmdbShowId
   return undefined;
 }
 
-async function getPayload(): Promise<CachedPayload | undefined> {
-  if (memoryCache && isFresh(memoryCache)) return memoryCache;
+export async function syncKometaAnimeIds(force = false): Promise<KometaAnimeIdsStatus> {
+  await getPayload(force);
+  return getKometaAnimeIdsStatus();
+}
+
+export function getKometaAnimeIdsStatus(): KometaAnimeIdsStatus {
+  const settings = getAppSettings();
+  const stored = memoryCache ?? readStoredPayload();
+  const ttl = getKometaAnimeIdsRefreshTtlMs();
+  if (!stored) {
+    return { enabled: settings.docchiKometaAnimeIdsEnabled, cached: false, fresh: false, ttlMs: ttl === Number.POSITIVE_INFINITY ? "once" : ttl, sourceUrl: SOURCE_URL };
+  }
+  const fetchedMs = new Date(stored.fetchedAt).getTime();
+  const ageMs = Number.isFinite(fetchedMs) ? Date.now() - fetchedMs : undefined;
+  return {
+    enabled: settings.docchiKometaAnimeIdsEnabled,
+    cached: true,
+    fresh: isFresh(stored),
+    fetchedAt: stored.fetchedAt,
+    ageMs,
+    ttlMs: ttl === Number.POSITIVE_INFINITY ? "once" : ttl,
+    sizeMb: roundMb(stored.sizeBytes),
+    entries: Object.keys(stored.entries).length,
+    sourceUrl: SOURCE_URL
+  };
+}
+
+async function getPayload(force: boolean): Promise<CachedPayload | undefined> {
+  if (!force && memoryCache && isFresh(memoryCache)) return memoryCache;
   const stored = readStoredPayload();
-  if (stored && (isFresh(stored) || getAppSettings().docchiKometaAnimeIdsRefreshInterval === "once")) {
+  if (!force && stored && (isFresh(stored) || getAppSettings().docchiKometaAnimeIdsRefreshInterval === "once")) {
     memoryCache = stored;
     return stored;
   }
