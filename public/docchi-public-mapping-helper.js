@@ -12,6 +12,11 @@
     ['monthly', 'Raz na miesiąc'],
     ['once', 'Tylko raz']
   ];
+  const DOCCHI_FORCE_MODES = [
+    ['partial', 'Połowiczny'],
+    ['enabled', 'Włączony'],
+    ['disabled', 'Wyłączony']
+  ];
   const LIBRARY_MODES = [['inherit', 'Dziedzicz globalne'], ...MODES];
   let settingsLoaded = false;
   let statusRefreshInProgress = false;
@@ -41,11 +46,13 @@
         <div class="panel-grid two">
           <label>Eksperymentalne mapowanie przez Docchi public<select id="docchiPublicMappingMode">${MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
           <label>Status Docchi<input id="docchiDetectedStatus" readonly value="Sprawdzanie..." /></label>
+          <label>Wymuszanie Docchi<select id="docchiStreamForceMode">${DOCCHI_FORCE_MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
           <label>Kometa Anime-IDs<select id="docchiKometaAnimeIdsEnabled"><option value="false">Wyłączone</option><option value="true">Włączone</option></select></label>
           <label>Pobieranie Kometa Anime-IDs<select id="docchiKometaAnimeIdsRefreshInterval">${KOMETA_INTERVALS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
           <label>Status Kometa<input id="docchiKometaStatus" readonly value="Nie sprawdzono" /></label>
           <label>Akcja Kometa<button id="syncKometaAnimeIdsBtn" class="small-btn" type="button">Pobierz teraz</button></label>
         </div>
+        <p class="hint">Wymuszanie Docchi: włączony = każdy zmapowany odcinek używa tylko Docchi; wyłączony = miks zwykłych addonów i Docchi; połowiczny = tylko odcinki, których mappedId różni się od originalId, używają wyłącznie Docchi.</p>
         <p class="hint">Kometa Anime-IDs, gdy jest włączone, próbuje znaleźć MAL ID po IMDb/TMDB i pyta Docchi bezpośrednio o właściwe anime. Gdy identyfikator nie zostanie znaleziony, addon wraca do starego search po tytule.</p>
         <p class="hint">Domyślnie wyłączone. Nasz addon wykrywa zainstalowany i włączony Docchi po nazwie/opisie/URL manifestu. Publiczny Docchi nie gwarantuje mapowania IMDb, dlatego tryb jest eksperymentalny.</p>
         <div class="action-row">
@@ -77,6 +84,7 @@
       const data = await apiRequest('/admin/settings');
       const settings = data.settings || {};
       setValue('#docchiPublicMappingMode', settings.docchiPublicMappingMode || 'disabled');
+      setValue('#docchiStreamForceMode', settings.docchiStreamForceMode || 'partial');
       setValue('#docchiKometaAnimeIdsEnabled', String(settings.docchiKometaAnimeIdsEnabled === true));
       setValue('#docchiKometaAnimeIdsRefreshInterval', settings.docchiKometaAnimeIdsRefreshInterval || 'daily');
       await refreshKometaStatus(data.kometa);
@@ -91,6 +99,7 @@
         method: 'PATCH',
         body: {
           docchiPublicMappingMode: value('#docchiPublicMappingMode') || 'disabled',
+          docchiStreamForceMode: value('#docchiStreamForceMode') || 'partial',
           docchiKometaAnimeIdsEnabled: value('#docchiKometaAnimeIdsEnabled') === 'true',
           docchiKometaAnimeIdsRefreshInterval: value('#docchiKometaAnimeIdsRefreshInterval') || 'daily'
         }
@@ -161,6 +170,7 @@
 
   function applySettings(settings) {
     setValue('#docchiPublicMappingMode', settings.docchiPublicMappingMode || 'disabled');
+    setValue('#docchiStreamForceMode', settings.docchiStreamForceMode || 'partial');
     setValue('#docchiKometaAnimeIdsEnabled', String(settings.docchiKometaAnimeIdsEnabled === true));
     setValue('#docchiKometaAnimeIdsRefreshInterval', settings.docchiKometaAnimeIdsRefreshInterval || 'daily');
   }
