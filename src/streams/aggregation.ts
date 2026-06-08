@@ -1,8 +1,10 @@
 import { fetchAddonStreams, type AddonStreamFetchResult, type ExternalStremioStream } from "../addons/addon-stream-client.js";
 import { listAddons } from "../addons/addon-registry.js";
 import type { RegisteredAddon } from "../addons/types.js";
+import { getDocchiEpisodeMappingByMappedId } from "../docchi/docchi-episode-mapping-store.js";
 import { fetchDocchiFixedStreams } from "../docchi/docchi-public-mapper.js";
 import { getAppSettings, getEffectiveLinkValidationMode, getEffectiveStreamValidationTimeoutMs, type LinkValidationMode } from "../settings/app-settings.js";
+import { writeSystemLog } from "../system/system-log.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
 import { rankCandidateStreams, rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
@@ -61,8 +63,20 @@ export async function aggregateStreams(
   };
 
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
+  const persistedDocchiMapping = type === "series" ? getDocchiEpisodeMappingByMappedId(id) : undefined;
+  const regularAddonId = persistedDocchiMapping?.originalId ?? id;
+  if (persistedDocchiMapping && regularAddonId !== id) {
+    writeSystemLog("info", "aggregation", "Using original TMDB/IMDb episode id for regular addons and mapped Docchi id for Docchi.", {
+      requestedId: id,
+      regularAddonId,
+      docchiId: persistedDocchiMapping.docchiId,
+      originalId: persistedDocchiMapping.originalId,
+      mappedId: persistedDocchiMapping.mappedId
+    });
+  }
+
   const [regularAddonResults, docchiFixedResults] = await Promise.all([
-    Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, id))),
+    Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, regularAddonId))),
     fetchDocchiFixedStreams(type, id)
   ]);
   const addonResults = [...regularAddonResults, ...docchiFixedResults];
