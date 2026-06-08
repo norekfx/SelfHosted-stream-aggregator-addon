@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 export type LinkValidationMode = "best" | "all" | "5" | "10" | "20" | "40" | "80" | "100" | "150" | "200";
 export type MetadataSyncIntervalMinutes = 0 | 10 | 30 | 60 | 120 | 240 | 480 | 720 | 1440;
 export type DocchiPublicMappingMode = "disabled" | "animation_series" | "series" | "all";
+export type DocchiKometaAnimeIdsRefreshInterval = "daily" | "weekly" | "biweekly" | "monthly" | "once";
 
 export type AppSettings = {
   preferredAudioLanguage: string;
@@ -29,6 +30,8 @@ export type AppSettings = {
   tmdbRegion: string;
   metadataSyncIntervalMinutes: number;
   docchiPublicMappingMode: DocchiPublicMappingMode;
+  docchiKometaAnimeIdsEnabled: boolean;
+  docchiKometaAnimeIdsRefreshInterval: DocchiKometaAnimeIdsRefreshInterval;
   autoTranscodeMinQuality: string;
   autoTranscodeMaxQuality: string;
   transcodePreset: string;
@@ -46,6 +49,7 @@ export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster"
 export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80", "100", "150", "200"] as const;
 export const METADATA_SYNC_INTERVALS = [0, 10, 30, 60, 120, 240, 480, 720, 1440] as const;
 export const DOCCHI_PUBLIC_MAPPING_MODES = ["disabled", "animation_series", "series", "all"] as const;
+export const DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS = ["daily", "weekly", "biweekly", "monthly", "once"] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
@@ -70,6 +74,8 @@ const defaults: AppSettings = {
   tmdbRegion: "PL",
   metadataSyncIntervalMinutes: 1440,
   docchiPublicMappingMode: "disabled",
+  docchiKometaAnimeIdsEnabled: false,
+  docchiKometaAnimeIdsRefreshInterval: "daily",
   autoTranscodeMinQuality: "144p",
   autoTranscodeMaxQuality: "1080p",
   transcodePreset: "veryfast",
@@ -96,7 +102,7 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "preferDebrid" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails") {
+    if (row.key === "preferDebrid" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails" || row.key === "docchiKometaAnimeIdsEnabled") {
       settings[row.key] = row.value === "true";
       continue;
     }
@@ -176,6 +182,15 @@ export function getMetadataSyncTtlMs(): number {
   return minutes <= 0 ? 0 : minutes * 60 * 1000;
 }
 
+export function getKometaAnimeIdsRefreshTtlMs(): number {
+  const interval = getAppSettings().docchiKometaAnimeIdsRefreshInterval;
+  if (interval === "once") return Number.POSITIVE_INFINITY;
+  if (interval === "weekly") return 7 * 24 * 60 * 60 * 1000;
+  if (interval === "biweekly") return 14 * 24 * 60 * 60 * 1000;
+  if (interval === "monthly") return 30 * 24 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000;
+}
+
 function normalizeLanguageCode(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return DEFAULT_PREFERRED_LANGUAGE;
@@ -188,6 +203,8 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.preferDebrid = normalized.preferDebrid !== false;
   normalized.detectDebridPlaceholders = normalized.detectDebridPlaceholders === true;
   normalized.debridPlaceholderCompareDeclaredSize = normalized.debridPlaceholderCompareDeclaredSize === true;
+  normalized.docchiKometaAnimeIdsEnabled = normalized.docchiKometaAnimeIdsEnabled === true;
+  normalized.docchiKometaAnimeIdsRefreshInterval = DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS.includes(normalized.docchiKometaAnimeIdsRefreshInterval as DocchiKometaAnimeIdsRefreshInterval) ? normalized.docchiKometaAnimeIdsRefreshInterval : defaults.docchiKometaAnimeIdsRefreshInterval;
   normalized.tmdbApiKey = normalized.tmdbApiKey?.trim() || undefined;
   normalized.tmdbReadAccessToken = normalized.tmdbReadAccessToken?.trim() || undefined;
   normalized.tmdbLanguage = normalized.tmdbLanguage?.trim() || defaults.tmdbLanguage;
