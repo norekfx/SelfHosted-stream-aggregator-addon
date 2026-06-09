@@ -2,6 +2,8 @@ export type LibraryMediaType = "movie" | "series";
 export type LibrarySource = "tmdb";
 export type LibraryMode = "discover" | "trending" | "popular" | "top_rated" | "now_playing" | "upcoming" | "airing_today" | "on_the_air";
 export type DocchiLibraryMappingMode = "inherit" | "disabled" | "animation_series" | "series" | "all";
+export type AnimeSubLibraryMode = "manual" | "24h" | "3d" | "7d" | "14d" | "30d";
+export type LibraryAutomationInterval = 24 | 72 | 168 | 336 | 720;
 
 export type LibraryConfig = {
   language?: string;
@@ -21,6 +23,10 @@ export type LibraryConfig = {
   voteCountGte?: number;
   itemLimit?: number;
   docchiPublicMappingMode?: DocchiLibraryMappingMode;
+  docchiAutomationMode?: DocchiLibraryMappingMode;
+  docchiAutomationIntervalHours?: LibraryAutomationInterval;
+  animeSubAutomationMode?: AnimeSubLibraryMode;
+  animeSubAutomationIntervalHours?: LibraryAutomationInterval;
   includeAdult?: boolean;
   timeWindow?: "day" | "week";
 };
