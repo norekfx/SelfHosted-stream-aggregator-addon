@@ -5,6 +5,7 @@ import { getDocchiEpisodeMappingByMappedId, listDocchiEpisodeMappingsForSeries }
 import { fetchDocchiFixedStreams } from "../docchi/docchi-public-mapper.js";
 import { getAppSettings, getEffectiveLinkValidationMode, getEffectiveStreamValidationTimeoutMs, type LinkValidationMode } from "../settings/app-settings.js";
 import { writeSystemLog } from "../system/system-log.js";
+import { fetchTmdbMeta } from "../tmdb/tmdb-client.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
 import { rankCandidateStreams, rankWorkingStreams, selectBestOriginalStream, type DocchiIndexingRankingHints, type RankedStream } from "./rank-streams.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
@@ -52,6 +53,8 @@ export type AggregationResult = {
 };
 
 type EpisodeMappingSummary = { originalId: string; mappedId: string; docchiId?: string; docchiTitle?: string; seriesId: string; sourceSeason: number; mappedSeason: number; sourceEpisode: number; mappedEpisode: number };
+type TmdbEpisode = { id?: string; title?: string; released?: string; season?: number; episode?: number };
+type TmdbMeta = { name?: string; tmdbId?: number; videos?: TmdbEpisode[] };
 
 export async function aggregateStreams(
   type: StreamType,
@@ -63,10 +66,13 @@ export async function aggregateStreams(
   const persistedDocchiMapping = type === "series" ? getDocchiEpisodeMappingByMappedId(id) : undefined;
   const regularAddonId = persistedDocchiMapping?.originalId ?? id;
   const seriesMappings = persistedDocchiMapping ? listDocchiEpisodeMappingsForSeries(persistedDocchiMapping.seriesId) : [];
+  const tmdbMeta = persistedDocchiMapping ? await fetchTmdbMeta("series", persistedDocchiMapping.seriesId).catch(() => null) as TmdbMeta | null : null;
+  const sourceEpisode = findTmdbEpisode(tmdbMeta?.videos, persistedDocchiMapping?.sourceSeason, persistedDocchiMapping?.sourceEpisode);
+  const mappedEpisode = findTmdbEpisode(tmdbMeta?.videos, persistedDocchiMapping?.mappedSeason, persistedDocchiMapping?.mappedEpisode);
   const docchiOnlyReason = getDocchiOnlyReason(settings.docchiStreamForceMode, persistedDocchiMapping, seriesMappings);
   const useDocchiOnly = Boolean(docchiOnlyReason);
   const allowPartialRegularFallback = useDocchiOnly && settings.docchiStreamForceMode === "partial";
-  const docchiIndexing = buildDocchiIndexingRankingHints(persistedDocchiMapping, seriesMappings);
+  const docchiIndexing = buildDocchiIndexingRankingHints(persistedDocchiMapping, seriesMappings, tmdbMeta?.name, [sourceEpisode?.title, mappedEpisode?.title]);
   const rankingPreferences = {
     preferredAudioLanguage: preferences.preferredAudioLanguage ?? settings.preferredAudioLanguage,
     preferredSubtitleLanguage: preferences.preferredSubtitleLanguage ?? settings.preferredSubtitleLanguage,
@@ -79,6 +85,7 @@ export async function aggregateStreams(
       originalId: persistedDocchiMapping?.originalId,
       mappedId: persistedDocchiMapping?.mappedId,
       title: docchiIndexing.title,
+      titles: docchiIndexing.titles,
       ids: docchiIndexing.ids
     });
   }
@@ -196,7 +203,7 @@ function getDocchiOnlyReason(mode: string, mapping: EpisodeMappingSummary | unde
   return undefined;
 }
 
-function buildDocchiIndexingRankingHints(mapping: EpisodeMappingSummary | undefined, seriesMappings: EpisodeMappingSummary[]): DocchiIndexingRankingHints | undefined {
+function buildDocchiIndexingRankingHints(mapping: EpisodeMappingSummary | undefined, seriesMappings: EpisodeMappingSummary[], seriesTitle?: string, episodeTitles: Array<string | undefined> = []): DocchiIndexingRankingHints | undefined {
   if (!mapping?.docchiId) return undefined;
   const ids = [
     { season: mapping.sourceSeason, episode: mapping.sourceEpisode, label: `source S${pad2(mapping.sourceSeason)}E${pad2(mapping.sourceEpisode)}` },
@@ -208,12 +215,34 @@ function buildDocchiIndexingRankingHints(mapping: EpisodeMappingSummary | undefi
         { season: item.mappedSeason, episode: item.mappedEpisode, label: `mapped S${pad2(item.mappedSeason)}E${pad2(item.mappedEpisode)}` }
       ])
   ];
+  const titles = dedupeStrings([seriesTitle, mapping.docchiTitle, ...episodeTitles]);
 
   return {
     enabled: true,
-    title: mapping.docchiTitle,
+    title: titles[0],
+    titles,
     ids: dedupeDocchiIndexingIds(ids)
   };
+}
+
+function findTmdbEpisode(videos: TmdbEpisode[] | undefined, season: number | undefined, episode: number | undefined): TmdbEpisode | undefined {
+  if (!season || !episode) return undefined;
+  const list = videos ?? [];
+  return list.find((video) => video.season === season && video.episode === episode) ?? list.find((video) => video.episode === episode) ?? list[episode - 1];
+}
+
+function dedupeStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
 }
 
 function dedupeDocchiIndexingIds(ids: DocchiIndexingRankingHints["ids"]): DocchiIndexingRankingHints["ids"] {
