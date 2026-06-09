@@ -18,7 +18,8 @@ const state = {
   sessions: [],
   healthReport: null,
   logs: [],
-  historyDetails: null
+  historyDetails: null,
+  subtitleCache: null
 };
 
 const titles = {
@@ -49,13 +50,7 @@ async function checkAuth() {
   const status = await api('/auth/status');
   state.user = status.user ?? null;
   state.needsRegistration = Boolean(status.needsRegistration);
-
-  if (status.authenticated) {
-    showApp(status.user);
-    await loadAll();
-    return;
-  }
-
+  if (status.authenticated) { showApp(status.user); await loadAll(); return; }
   showAuth(status.needsRegistration);
 }
 
@@ -64,17 +59,11 @@ function showAuth(needsRegistration) {
   $('#authScreen').classList.remove('hidden');
   $('#authTitle').textContent = needsRegistration ? 'Rejestracja administratora' : 'Logowanie administratora';
   $('#authSubtitle').textContent = needsRegistration ? 'Pierwsze uruchomienie' : 'Panel chroniony';
-  $('#authDescription').textContent = needsRegistration
-    ? 'Utwórz pierwsze konto administratora. Ten ekran pojawia się tylko przed pierwszą rejestracją.'
-    : 'Zaloguj się, aby zarządzać addonami, cache, historią i ustawieniami.';
+  $('#authDescription').textContent = needsRegistration ? 'Utwórz pierwsze konto administratora. Ten ekran pojawia się tylko przed pierwszą rejestracją.' : 'Zaloguj się, aby zarządzać addonami, cache, historią i ustawieniami.';
   $('#authSubmit').textContent = needsRegistration ? 'Zarejestruj' : 'Zaloguj';
 }
 
-function showApp(user) {
-  $('#authScreen').classList.add('hidden');
-  $('#appShell').classList.remove('hidden');
-  $('#userLabel').textContent = user ? `Zalogowano: ${user.username}` : '';
-}
+function showApp(user) { $('#authScreen').classList.add('hidden'); $('#appShell').classList.remove('hidden'); $('#userLabel').textContent = user ? `Zalogowano: ${user.username}` : ''; }
 
 function bindNavigation() {
   $$('.nav-item').forEach((button) => {
@@ -87,7 +76,6 @@ function bindNavigation() {
       await refreshCurrentView();
     });
   });
-
   $('#refreshBtn').addEventListener('click', refreshCurrentView);
   $('#reloadCacheBtn').addEventListener('click', loadCache);
   $('#reloadSessionsBtn').addEventListener('click', loadSessions);
@@ -101,6 +89,10 @@ function bindNavigation() {
   $('#logoutBtn').addEventListener('click', logout);
   $('#logoutOtherSessionsBtn').addEventListener('click', logoutOtherSessions);
   $('#logoutAllSessionsBtn').addEventListener('click', logoutAllSessions);
+  $('#openSubtitlesBtn')?.addEventListener('click', openSubtitleModal);
+  $('#closeSubtitleModalBtn')?.addEventListener('click', closeSubtitleModal);
+  $('#reloadSubtitlesBtn')?.addEventListener('click', loadSubtitlePreview);
+  $('#fetchSubtitlesBtn')?.addEventListener('click', fetchSubtitlePreview);
 }
 
 function bindForms() {
@@ -116,92 +108,26 @@ function bindForms() {
     toast(state.needsRegistration ? 'Administrator utworzony.' : 'Zalogowano.');
     await loadAll();
   });
-
-  $('#addonForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const manifestUrl = $('#addonUrl').value.trim();
-    await api('/admin/addons', { method: 'POST', body: { manifestUrl } });
-    $('#addonUrl').value = '';
-    toast('Addon dodany.');
-    await loadAddons();
-    await loadSystemLogs();
-  });
-
-  $('#diagnosticsForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    await runDiagnostics();
-  });
-
+  $('#addonForm').addEventListener('submit', async (event) => { event.preventDefault(); const manifestUrl = $('#addonUrl').value.trim(); await api('/admin/addons', { method: 'POST', body: { manifestUrl } }); $('#addonUrl').value = ''; toast('Addon dodany.'); await loadAddons(); await loadSystemLogs(); });
+  $('#diagnosticsForm').addEventListener('submit', async (event) => { event.preventDefault(); await runDiagnostics(); });
   $('#settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const body = {
-      preferredAudioLanguage: $('#preferredAudioLanguage').value || 'pl',
-      preferredSubtitleLanguage: $('#preferredSubtitleLanguage').value || 'pl',
-      defaultTranscodeBufferPreset: $('#defaultTranscodeBufferPreset').value,
-      streamValidationTimeoutMs: Number($('#streamValidationTimeoutMs').value),
-      maxTranscodeSessions: Number($('#maxTranscodeSessions').value),
-      publicBaseUrl: $('#publicBaseUrl').value.trim(),
-      autoRefreshCache: $('#autoRefreshCache').checked,
-      showDiagnosticDetails: $('#showDiagnosticDetails').checked
-    };
-
+    const body = { preferredAudioLanguage: $('#preferredAudioLanguage').value || 'pl', preferredSubtitleLanguage: $('#preferredSubtitleLanguage').value || 'pl', defaultTranscodeBufferPreset: $('#defaultTranscodeBufferPreset').value, streamValidationTimeoutMs: Number($('#streamValidationTimeoutMs').value), maxTranscodeSessions: Number($('#maxTranscodeSessions').value), publicBaseUrl: $('#publicBaseUrl').value.trim(), autoRefreshCache: $('#autoRefreshCache').checked, showDiagnosticDetails: $('#showDiagnosticDetails').checked };
     const result = await api('/admin/settings', { method: 'PATCH', body });
     state.settings = result.settings;
-    renderSettings();
-    renderInstall();
-    toast('Ustawienia zapisane.');
-    await loadSystemLogs();
+    renderSettings(); renderInstall(); toast('Ustawienia zapisane.'); await loadSystemLogs();
   });
-
-  $('#changePasswordForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    await api('/auth/change-password', {
-      method: 'POST',
-      body: {
-        currentPassword: $('#currentPassword').value,
-        newPassword: $('#newPassword').value
-      }
-    });
-    $('#currentPassword').value = '';
-    $('#newPassword').value = '';
-    toast('Hasło zmienione.');
-  });
+  $('#changePasswordForm').addEventListener('submit', async (event) => { event.preventDefault(); await api('/auth/change-password', { method: 'POST', body: { currentPassword: $('#currentPassword').value, newPassword: $('#newPassword').value } }); $('#currentPassword').value = ''; $('#newPassword').value = ''; toast('Hasło zmienione.'); });
 }
 
 async function logout() { await api('/auth/logout', { method: 'POST' }); resetPrivateState(); showAuth(false); }
 async function logoutOtherSessions() { await api('/auth/logout-other-sessions', { method: 'POST' }); toast('Inne sesje zostały wylogowane.'); await loadSessions(); }
 async function logoutAllSessions() { await api('/auth/logout-all-sessions', { method: 'POST' }); resetPrivateState(); showAuth(false); }
-function resetPrivateState() { state.user = null; state.addons = []; state.cache = []; state.history = []; state.sessions = []; state.healthReport = null; state.logs = []; state.historyDetails = null; }
-
-async function loadAll() {
-  await Promise.allSettled([checkHealth(), loadLanguages(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]);
-  renderDashboard(); renderInstall();
-}
-
-async function refreshCurrentView() {
-  if (state.view === 'dashboard') await loadAll();
-  if (state.view === 'install') renderInstall();
-  if (state.view === 'addons') await loadAddons();
-  if (state.view === 'cache') await loadCache();
-  if (state.view === 'history') await loadHistory();
-  if (state.view === 'system') await Promise.all([loadTechnicalHealth(), loadSystemLogs()]);
-  if (state.view === 'settings') await Promise.all([loadLanguages(), loadSettings()]);
-  if (state.view === 'security') await loadSessions();
-}
-
+function resetPrivateState() { state.user = null; state.addons = []; state.cache = []; state.history = []; state.sessions = []; state.healthReport = null; state.logs = []; state.historyDetails = null; state.subtitleCache = null; }
+async function loadAll() { await Promise.allSettled([checkHealth(), loadLanguages(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]); renderDashboard(); renderInstall(); }
+async function refreshCurrentView() { if (state.view === 'dashboard') await loadAll(); if (state.view === 'install') renderInstall(); if (state.view === 'addons') await loadAddons(); if (state.view === 'cache') await loadCache(); if (state.view === 'history') await loadHistory(); if (state.view === 'system') await Promise.all([loadTechnicalHealth(), loadSystemLogs()]); if (state.view === 'settings') await Promise.all([loadLanguages(), loadSettings()]); if (state.view === 'security') await loadSessions(); }
 async function checkHealth() { try { await api('/health'); $('.status-dot').className = 'status-dot ok'; $('#healthLabel').textContent = 'API online'; } catch { $('.status-dot').className = 'status-dot bad'; $('#healthLabel').textContent = 'API offline'; } }
-
-async function loadLanguages() {
-  try {
-    const data = await api('/admin/languages');
-    const languages = data.languages ?? [];
-    state.languages = languages.length ? languages : fallbackLanguages;
-  } catch {
-    state.languages = fallbackLanguages;
-  }
-  renderLanguageSelects();
-}
-
+async function loadLanguages() { try { const data = await api('/admin/languages'); const languages = data.languages ?? []; state.languages = languages.length ? languages : fallbackLanguages; } catch { state.languages = fallbackLanguages; } renderLanguageSelects(); }
 async function loadSettings() { const data = await api('/admin/settings'); state.settings = data.settings; renderSettings(); renderSettingsSummary(); renderInstall(); }
 async function loadAddons() { const data = await api('/admin/addons'); state.addons = data.addons ?? []; renderAddons(); renderDashboard(); renderInstall(); }
 async function loadCache() { const data = await api('/admin/cache?limit=100'); state.cache = data.cache ?? []; renderCache(); renderDashboard(); }
@@ -217,8 +143,7 @@ async function runDiagnostics() {
   const id = $('#diagId').value.trim();
   const button = $('#runDiagnosticsBtn');
   await runButtonAction(button, 'Pracuje...', async () => {
-    $('#diagnosticsOutput').textContent = 'Diagnostyka pracuje...';
-    toast('Diagnostyka pracuje...');
+    $('#diagnosticsOutput').textContent = 'Diagnostyka pracuje...'; toast('Diagnostyka pracuje...');
     const result = await api(`/admin/aggregate/${type}/${encodeURIComponent(id)}`);
     $('#diagnosticsOutput').textContent = JSON.stringify(result, null, 2);
     toast(result.selectedOriginal ? 'Diagnostyka zakończona: znaleziono działający Original.' : 'Diagnostyka zakończona: brak działającego Original.');
@@ -226,17 +151,16 @@ async function runDiagnostics() {
   });
 }
 
+async function openSubtitleModal() { $('#subtitleModal').classList.remove('hidden'); $('#subtitleModalMedia').textContent = `${$('#diagType').value}:${$('#diagId').value.trim()}`; await loadSubtitlePreview(); }
+function closeSubtitleModal() { $('#subtitleModal').classList.add('hidden'); }
+async function loadSubtitlePreview() { const type = $('#diagType').value; const id = $('#diagId').value.trim(); $('#subtitleModalBody').innerHTML = '<div class="list empty">Wczytuję napisy...</div>'; const data = await api(`/admin/animesub/${type}/${encodeURIComponent(id)}`); state.subtitleCache = data.cache; renderSubtitleModal(); }
+async function fetchSubtitlePreview() { const type = $('#diagType').value; const id = $('#diagId').value.trim(); await runButtonAction($('#fetchSubtitlesBtn'), 'Pobieram...', async () => { const data = await api(`/admin/animesub/${type}/${encodeURIComponent(id)}/fetch`, { method: 'POST' }); state.subtitleCache = data.cache; renderSubtitleModal(); toast(`Pobrano napisy: ${data.cache?.subtitles?.length ?? 0}`); await loadSystemLogs(); }); }
+function renderSubtitleModal() { const cache = state.subtitleCache; if (!cache) { $('#subtitleModalBody').innerHTML = '<div class="list empty">Brak zapisanych napisów. Kliknij „Wymuś pobranie”.</div>'; return; } const subtitles = cache.subtitles ?? []; const publicUrl = `${getInstallBaseUrl()}/subtitles/${cache.type}/${encodeURIComponent(cache.mediaId)}.json`; $('#subtitleModalBody').innerHTML = `<div class="kv-list"><div class="kv"><span>Media</span><strong>${escapeHtml(cache.type)}:${escapeHtml(cache.mediaId)}</strong></div><div class="kv"><span>Znalezione napisy</span><strong>${subtitles.length}</strong></div><div class="kv"><span>Ostatnie pobranie</span><strong>${escapeHtml(formatDate(cache.updatedAt))}</strong></div><div class="kv"><span>Publiczny endpoint</span><strong><code>${escapeHtml(publicUrl)}</code></strong></div></div><h3>Wyniki AnimeSub</h3>${subtitles.length ? table(['Język', 'Nazwa', 'Addon', 'URL'], subtitles.map((sub) => [escapeHtml(sub.lang ?? '-'), escapeHtml(sub.name ?? sub.id ?? '-'), escapeHtml(sub.addonName ?? sub.addonId ?? '-'), sub.url ? `<a href="${escapeHtml(sub.url)}" target="_blank" rel="noreferrer">Otwórz</a>` : '-'])) : '<div class="list empty">AnimeSub nie zwrócił napisów.</div>'}<h3>Log pobrania</h3>${table(['Addon', 'Status', 'Napisy', 'Czas', 'Błąd'], (cache.addonResults ?? []).map((result) => [escapeHtml(result.addonName ?? result.addonId), badge(result.status), result.subtitleCount ?? 0, `${result.responseTimeMs ?? '-'} ms`, escapeHtml(result.error ?? '-')]))}`; }
+
 function renderDashboard() { $('#statAddons').textContent = state.addons.length; $('#statOnline').textContent = state.addons.filter((addon) => addon.status === 'online').length; $('#statCache').textContent = state.cache.length; $('#statHistory').textContent = state.history.length; const recent = state.cache.slice(0, 5); $('#recentCache').innerHTML = recent.length ? recent.map((item) => `<div class="kv"><span>${escapeHtml(item.type)}:${escapeHtml(item.mediaId)}</span><strong>${badge(item.status)}</strong></div>`).join('') : 'Brak danych.'; $('#recentCache').classList.toggle('empty', recent.length === 0); renderSettingsSummary(); }
 function renderSettingsSummary() { const s = state.settings ?? {}; $('#settingsSummary').innerHTML = [['Audio', languageLabel(s.preferredAudioLanguage)], ['Napisy', languageLabel(s.preferredSubtitleLanguage)], ['Bufor', s.defaultTranscodeBufferPreset], ['Timeout walidacji', `${s.streamValidationTimeoutMs ?? '-'} ms`], ['Sesje transkodowania', s.maxTranscodeSessions], ['Publiczny URL', s.publicBaseUrl || 'nie ustawiono']].map(([key, value]) => `<div class="kv"><span>${key}</span><strong>${escapeHtml(String(value ?? '-'))}</strong></div>`).join(''); }
-function renderInstall() { const manifestUrl = getManifestUrl(); const testStreamUrl = getTestStreamUrl(); $('#manifestInstallUrl').textContent = manifestUrl; $('#testStreamUrl').textContent = testStreamUrl; const baseUrl = getInstallBaseUrl(); const healthStatus = state.healthReport?.status ?? 'warn'; const hasHttps = baseUrl.startsWith('https://'); const hasAddons = state.addons.length > 0; const hasOnlineAddon = state.addons.some((addon) => addon.status === 'online'); const checks = [['Publiczny URL', hasHttps ? 'ok' : 'warn', hasHttps ? 'Skonfigurowano HTTPS.' : 'Dla zdalnego Stremio/Nuvio ustaw HTTPS w Publicznym URL.'], ['Manifest', 'ok', 'Endpoint manifestu pozostaje publiczny.'], ['Playback bez logowania', 'ok', 'Stream/proxy/transcode endpointy są publiczne dla klientów.'], ['Addony', hasAddons ? (hasOnlineAddon ? 'ok' : 'warn') : 'warn', hasAddons ? (hasOnlineAddon ? 'Masz co najmniej jeden addon online.' : 'Addony są dodane, ale żaden nie jest online.') : 'Dodaj co najmniej jeden zewnętrzny addon.'], ['Health-check', healthStatus, state.healthReport ? `Ostatni status: ${healthStatus}.` : 'Uruchom test w zakładce System.']]; $('#installChecklist').innerHTML = checks.map(([label, status, message]) => `<div class="check-item"><div><strong>${escapeHtml(label)}</strong><br><span>${escapeHtml(message)}</span></div>${badge(status)}</div>`).join(''); }
-
-function renderAddons() {
-  if (!state.addons.length) { $('#addonsList').innerHTML = '<div class="list empty">Nie dodano addonów.</div>'; return; }
-  $('#addonsList').innerHTML = table(['Nazwa', 'Status', 'Tryb', 'Zasoby', 'Typy', 'Czas', 'Akcje'], state.addons.map((addon) => { const toggleClass = addon.enabled ? (addon.status === 'online' ? 'enabled' : 'warning') : 'disabled'; return [`<strong>${escapeHtml(addon.name ?? addon.manifestUrl)}</strong><br><small>${escapeHtml(addon.manifestUrl)}</small>`, badge(addon.status), badge(addon.enabled ? 'enabled' : 'disabled'), escapeHtml((addon.supportedResources ?? []).join(', ') || '-'), escapeHtml((addon.supportedTypes ?? []).join(', ') || '-'), `${addon.responseTimeMs ?? '-'} ms`, `<div class="action-row"><button class="small-btn" data-check-addon="${addon.id}">Sprawdź</button><button class="small-btn ${toggleClass}" data-toggle-addon="${addon.id}" data-enabled="${!addon.enabled}">${addon.enabled ? 'Wyłącz' : 'Włącz'}</button></div>`]; }));
-  $$('[data-check-addon]').forEach((button) => button.addEventListener('click', async () => { await runButtonAction(button, 'Sprawdzam...', async () => { const data = await api(`/admin/addons/${button.dataset.checkAddon}/check`, { method: 'POST' }); toast(data.addon?.status === 'online' ? 'Addon działa.' : `Addon ma błąd: ${data.addon?.lastError ?? 'nieznany błąd'}`); await loadAddons(); await loadSystemLogs(); }); }));
-  $$('[data-toggle-addon]').forEach((button) => button.addEventListener('click', async () => { await api(`/admin/addons/${button.dataset.toggleAddon}`, { method: 'PATCH', body: { enabled: button.dataset.enabled === 'true' } }); toast('Zmieniono status addonu.'); await loadAddons(); await loadSystemLogs(); }));
-}
-
+function renderInstall() { const manifestUrl = getManifestUrl(); const testStreamUrl = getTestStreamUrl(); $('#manifestInstallUrl').textContent = manifestUrl; $('#testStreamUrl').textContent = testStreamUrl; const baseUrl = getInstallBaseUrl(); const healthStatus = state.healthReport?.status ?? 'warn'; const hasHttps = baseUrl.startsWith('https://'); const hasAddons = state.addons.length > 0; const hasOnlineAddon = state.addons.some((addon) => addon.status === 'online'); const hasAnimeSub = state.addons.some((addon) => addon.detectedAnimeSub && addon.enabled && addon.status === 'online'); const checks = [['Publiczny URL', hasHttps ? 'ok' : 'warn', hasHttps ? 'Skonfigurowano HTTPS.' : 'Dla zdalnego Stremio/Nuvio ustaw HTTPS w Publicznym URL.'], ['Manifest', 'ok', 'Endpoint manifestu pozostaje publiczny.'], ['Playback bez logowania', 'ok', 'Stream/proxy/transcode endpointy są publiczne dla klientów.'], ['Napisy AnimeSub', hasAnimeSub ? 'ok' : 'warn', hasAnimeSub ? 'Wykryto aktywny addon AnimeSub.' : 'Dodaj animesub.info, aby ręcznie pobierać napisy.'], ['Addony', hasAddons ? (hasOnlineAddon ? 'ok' : 'warn') : 'warn', hasAddons ? (hasOnlineAddon ? 'Masz co najmniej jeden addon online.' : 'Addony są dodane, ale żaden nie jest online.') : 'Dodaj co najmniej jeden zewnętrzny addon.'], ['Health-check', healthStatus, state.healthReport ? `Ostatni status: ${healthStatus}.` : 'Uruchom test w zakładce System.']]; $('#installChecklist').innerHTML = checks.map(([label, status, message]) => `<div class="check-item"><div><strong>${escapeHtml(label)}</strong><br><span>${escapeHtml(message)}</span></div>${badge(status)}</div>`).join(''); }
+function renderAddons() { if (!state.addons.length) { $('#addonsList').innerHTML = '<div class="list empty">Nie dodano addonów.</div>'; return; } $('#addonsList').innerHTML = table(['Nazwa', 'Status', 'Tryb', 'Wykryto', 'Zasoby', 'Typy', 'Czas', 'Akcje'], state.addons.map((addon) => { const toggleClass = addon.enabled ? (addon.status === 'online' ? 'enabled' : 'warning') : 'disabled'; const detected = [addon.detectedDocchi ? badge('Docchi') : '', addon.detectedAnimeSub ? badge('AnimeSub') : ''].filter(Boolean).join(' ') || '-'; return [`<strong>${escapeHtml(addon.name ?? addon.manifestUrl)}</strong><br><small>${escapeHtml(addon.manifestUrl)}</small>`, badge(addon.status), badge(addon.enabled ? 'enabled' : 'disabled'), detected, escapeHtml((addon.supportedResources ?? []).join(', ') || '-'), escapeHtml((addon.supportedTypes ?? []).join(', ') || '-'), `${addon.responseTimeMs ?? '-'} ms`, `<div class="action-row"><button class="small-btn" data-check-addon="${addon.id}">Sprawdź</button><button class="small-btn ${toggleClass}" data-toggle-addon="${addon.id}" data-enabled="${!addon.enabled}">${addon.enabled ? 'Wyłącz' : 'Włącz'}</button></div>`]; })); $$('[data-check-addon]').forEach((button) => button.addEventListener('click', async () => { await runButtonAction(button, 'Sprawdzam...', async () => { const data = await api(`/admin/addons/${button.dataset.checkAddon}/check`, { method: 'POST' }); toast(data.addon?.status === 'online' ? 'Addon działa.' : `Addon ma błąd: ${data.addon?.lastError ?? 'nieznany błąd'}`); await loadAddons(); await loadSystemLogs(); }); })); $$('[data-toggle-addon]').forEach((button) => button.addEventListener('click', async () => { await api(`/admin/addons/${button.dataset.toggleAddon}`, { method: 'PATCH', body: { enabled: button.dataset.enabled === 'true' } }); toast('Zmieniono status addonu.'); await loadAddons(); await loadSystemLogs(); })); }
 function renderCache() { if (!state.cache.length) { $('#cacheList').innerHTML = '<div class="list empty">Cache jest pusty.</div>'; return; } $('#cacheList').innerHTML = table(['Media', 'Status', 'Wybrany plik', 'Statystyki', 'Ostatnia aktualizacja', 'Akcje'], state.cache.map((item) => [`<strong>${escapeHtml(item.type)}:${escapeHtml(item.mediaId)}</strong>`, badge(item.status), escapeHtml(item.selectedOriginal?.title ?? '-'), escapeHtml(formatStats(item.stats)), escapeHtml(formatDate(item.updatedAt)), `<button class="small-btn" data-refresh-cache="${item.type}:${item.mediaId}">Odśwież</button>`])); $$('[data-refresh-cache]').forEach((button) => button.addEventListener('click', async () => { const { type, id } = parseTypedMediaId(button.dataset.refreshCache); await runButtonAction(button, 'Odświeżam...', async () => { await api(`/admin/cache/${type}/${encodeURIComponent(id)}/refresh`, { method: 'POST' }); toast('Cache odświeżony.'); await loadCache(); await loadSystemLogs(); }); })); }
 function renderHistory() { if (!state.history.length) { $('#historyList').innerHTML = '<div class="list empty">Brak historii.</div>'; return; } $('#historyList').innerHTML = table(['Data', 'Media', 'Streamy', 'Działające', 'Błędne', 'Wybrany Original', 'Akcje'], state.history.map((item) => [escapeHtml(formatDate(item.searchedAt)), `${escapeHtml(item.type)}:${escapeHtml(item.mediaId)}`, item.streamCount, item.workingStreamCount, item.failedStreamCount, escapeHtml(item.selectedOriginal?.title ?? '-'), `<button class="small-btn" data-history-details="${item.id}">Sprawdź</button>`])); $$('[data-history-details]').forEach((button) => button.addEventListener('click', async () => { await runButtonAction(button, 'Sprawdzam...', async () => loadHistoryDetails(button.dataset.historyDetails)); })); }
 function renderHistoryDetails() { const details = state.historyDetails; if (!details?.result) { $('#historyDetails').innerHTML = '<div class="list empty">Brak szczegółów dla tego wpisu.</div>'; return; } const selectedId = details.selectedOriginal?.id; const streams = details.result.rankedStreams ?? []; $('#historyDetails').innerHTML = `<div class="kv-list"><div class="kv"><span>Media</span><strong>${escapeHtml(details.type)}:${escapeHtml(details.mediaId)}</strong></div><div class="kv"><span>Wybrany Original</span><strong>${escapeHtml(details.selectedOriginal?.title ?? 'brak')}</strong></div><div class="kv"><span>Statystyki</span><strong>${details.workingStreamCount}/${details.streamCount} działa</strong></div></div><p>To jest analiza wyniku wyszukiwania. Każdy znaleziony plik jest pokazany osobno z powodem wyboru albo odrzucenia.</p><h3>Znalezione pliki</h3>${streams.length ? streams.map((stream) => renderStreamCard(stream, selectedId)).join('') : '<div class="list empty">Brak plików w szczegółach.</div>'}`; }
@@ -245,7 +169,6 @@ function explainRejection(stream) { const validationReason = String(stream.valid
 function renderTechnicalHealth() { const report = state.healthReport; if (!report) { $('#technicalHealth').innerHTML = '<div class="list empty">Nie uruchomiono testu.</div>'; return; } $('#technicalHealth').innerHTML = table(['Status', 'Test', 'Wiadomość', 'Szczegóły'], report.checks.map((check) => [badge(check.status), escapeHtml(check.name), escapeHtml(check.message), `<pre class="mini-code">${escapeHtml(JSON.stringify(check.details ?? {}, null, 2))}</pre>`])); }
 function renderSystemLogs() { if (!state.logs.length) { $('#systemLogs').innerHTML = '<div class="list empty">Brak logów dla wybranego filtra.</div>'; return; } $('#systemLogs').innerHTML = table(['Data', 'Poziom', 'Źródło', 'Komunikat', 'Szczegóły'], state.logs.map((log) => [escapeHtml(formatDate(log.createdAt)), badge(log.level), escapeHtml(log.source), escapeHtml(log.message), `<pre class="mini-code">${escapeHtml(JSON.stringify(log.details ?? {}, null, 2))}</pre>`])); }
 function renderSessions() { if (!state.sessions.length) { $('#sessionsList').innerHTML = '<div class="list empty">Brak aktywnych sesji.</div>'; return; } $('#sessionsList').innerHTML = table(['Sesja', 'Utworzona', 'Ostatnio widziana', 'Wygasa'], state.sessions.map((session) => [session.isCurrent ? badge('current') : escapeHtml(session.id.slice(0, 8)), escapeHtml(formatDate(session.createdAt)), escapeHtml(formatDate(session.lastSeenAt)), escapeHtml(formatDate(session.expiresAt))])); }
-
 function getLanguageOptions() { return state.languages.length ? state.languages : fallbackLanguages; }
 function renderLanguageSelects() { const options = getLanguageOptions().map((language) => `<option value="${escapeHtml(language.code)}">${escapeHtml(language.label ?? `${language.nativeName ?? language.code} / ${language.englishName ?? language.code}`)}</option>`).join(''); const audio = $('#preferredAudioLanguage'); const subtitles = $('#preferredSubtitleLanguage'); if (audio) audio.innerHTML = options; if (subtitles) subtitles.innerHTML = options; }
 function renderSettings() { const s = state.settings ?? {}; renderLanguageSelects(); $('#preferredAudioLanguage').value = s.preferredAudioLanguage ?? 'pl'; $('#preferredSubtitleLanguage').value = s.preferredSubtitleLanguage ?? 'pl'; $('#defaultTranscodeBufferPreset').value = s.defaultTranscodeBufferPreset ?? 'auto'; $('#streamValidationTimeoutMs').value = s.streamValidationTimeoutMs ?? 10000; $('#maxTranscodeSessions').value = s.maxTranscodeSessions ?? 2; $('#publicBaseUrl').value = s.publicBaseUrl ?? ''; $('#autoRefreshCache').checked = s.autoRefreshCache !== false; $('#showDiagnosticDetails').checked = s.showDiagnosticDetails !== false; }
