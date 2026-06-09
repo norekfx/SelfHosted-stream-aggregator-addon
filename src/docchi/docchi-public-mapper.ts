@@ -88,13 +88,35 @@ export function getEnabledDocchiAddons(): RegisteredAddon[] {
 }
 
 export async function fetchDocchiFixedStreams(type: StreamType, id: string): Promise<AddonStreamFetchResult[]> {
-  if (type !== "series" || !isDocchiMappingGloballyEnabled()) return [];
+  if (type !== "series") {
+    writeSystemLog("info", "docchi", "Docchi stream fetch skipped because request type is not series.", { type, id });
+    return [];
+  }
+
   const parsed = parseEpisodeId(id);
-  if (!parsed) return [];
-  const docchiAddons = getEnabledDocchiAddons();
-  if (!docchiAddons.length) return [];
+  if (!parsed) {
+    writeSystemLog("warn", "docchi", "Docchi stream fetch skipped because episode id could not be parsed.", { type, id });
+    return [];
+  }
 
   const persisted = getDocchiEpisodeMappingByMappedId(id);
+  const mappingEnabled = isDocchiMappingGloballyEnabled();
+  const docchiAddons = getEnabledDocchiAddons();
+
+  if (!docchiAddons.length) {
+    const candidates = listAddons().filter((addon) => addon.enabled && addon.status === "online").map((addon) => ({
+      id: addon.id,
+      name: addon.name,
+      manifestUrl: addon.manifestUrl,
+      status: addon.status,
+      enabled: addon.enabled,
+      supportedResources: addon.supportedResources,
+      detectedDocchi: isDocchiAddon(addon)
+    }));
+    writeSystemLog("warn", "docchi", "Docchi stream fetch skipped because no enabled online Docchi stream addon was found.", { type, id, mappingEnabled, persisted: Boolean(persisted?.docchiId), candidates });
+    return [];
+  }
+
   if (persisted?.docchiId) {
     writeSystemLog("info", "docchi", "Using persisted Docchi mapping for mapped stream request.", {
       requestedId: id,
@@ -102,7 +124,8 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
       mappedId: persisted.mappedId,
       docchiId: persisted.docchiId,
       matchMethod: persisted.matchMethod,
-      confidence: persisted.confidence
+      confidence: persisted.confidence,
+      mappingEnabled
     });
 
     const persistedResults = await Promise.all(docchiAddons.map((addon) => fetchAddonStreamsWithLog(addon, "anime", persisted.docchiId, "persisted-mapped-stream-fetch")));
@@ -114,7 +137,8 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
       originalId: persisted.originalId,
       mappedId: persisted.mappedId,
       persistedDocchiId: persisted.docchiId,
-      resultCount: persistedResults.length
+      resultCount: persistedResults.length,
+      mappingEnabled
     });
 
     const refreshed = await findDocchiEpisodeFix(persisted.originalId, { addons: docchiAddons, force: true });
@@ -133,9 +157,17 @@ export async function fetchDocchiFixedStreams(type: StreamType, id: string): Pro
     return persistedResults;
   }
 
+  if (!mappingEnabled) {
+    writeSystemLog("warn", "docchi", "Docchi stream fetch skipped because public mapping is disabled and no persisted mapping exists for requested id.", { type, id, parsed, docchiAddonCount: docchiAddons.length });
+    return [];
+  }
+
   const result = await findDocchiEpisodeFix(id, { addons: docchiAddons, force: false });
   const docchiId = result.docchiId;
-  if (!result.fixed || !docchiId) return [];
+  if (!result.fixed || !docchiId) {
+    writeSystemLog("warn", "docchi", "Docchi stream fetch skipped because no Docchi episode fix was found.", { type, id, fixed: result.fixed, docchiId, triedIds: result.triedIds, decision: result.debug?.decision });
+    return [];
+  }
   writeSystemLog("info", "docchi", "Docchi fixed episode index for stream aggregation.", { originalId: result.originalId, mappedId: result.mappedId, mappedSeason: result.mappedSeason, mappedEpisode: result.mappedEpisode, docchiId, matchMethod: result.matchMethod, confidence: result.confidence, resolver: result.debug?.resolver?.source });
   return Promise.all(docchiAddons.map((addon) => fetchAddonStreamsWithLog(addon, "anime", docchiId, "planned-fixed-stream-fetch")));
 }
