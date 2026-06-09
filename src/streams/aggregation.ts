@@ -6,7 +6,7 @@ import { fetchDocchiFixedStreams } from "../docchi/docchi-public-mapper.js";
 import { getAppSettings, getEffectiveLinkValidationMode, getEffectiveStreamValidationTimeoutMs, type LinkValidationMode } from "../settings/app-settings.js";
 import { writeSystemLog } from "../system/system-log.js";
 import { parseStreamMetadata } from "./parse-stream-metadata.js";
-import { rankCandidateStreams, rankWorkingStreams, selectBestOriginalStream, type RankedStream } from "./rank-streams.js";
+import { rankCandidateStreams, rankWorkingStreams, selectBestOriginalStream, type DocchiIndexingRankingHints, type RankedStream } from "./rank-streams.js";
 import type { NormalizedStreamMetadata } from "./stream-metadata.js";
 import { notChecked, type StreamValidationResult } from "./stream-validation.js";
 import type { StreamType } from "./types.js";
@@ -51,7 +51,7 @@ export type AggregationResult = {
   selectedOriginal: RankedStream | null;
 };
 
-type EpisodeMappingSummary = { originalId: string; mappedId: string; docchiId?: string; seriesId: string; sourceSeason: number; mappedSeason: number; sourceEpisode: number; mappedEpisode: number };
+type EpisodeMappingSummary = { originalId: string; mappedId: string; docchiId?: string; docchiTitle?: string; seriesId: string; sourceSeason: number; mappedSeason: number; sourceEpisode: number; mappedEpisode: number };
 
 export async function aggregateStreams(
   type: StreamType,
@@ -59,11 +59,6 @@ export async function aggregateStreams(
   preferences: AggregationPreferences = {}
 ): Promise<AggregationResult> {
   const settings = getAppSettings();
-  const rankingPreferences = {
-    preferredAudioLanguage: preferences.preferredAudioLanguage ?? settings.preferredAudioLanguage,
-    preferredSubtitleLanguage: preferences.preferredSubtitleLanguage ?? settings.preferredSubtitleLanguage
-  };
-
   const activeAddons = listAddons().filter(isStreamAddonEnabled);
   const persistedDocchiMapping = type === "series" ? getDocchiEpisodeMappingByMappedId(id) : undefined;
   const regularAddonId = persistedDocchiMapping?.originalId ?? id;
@@ -71,6 +66,23 @@ export async function aggregateStreams(
   const docchiOnlyReason = getDocchiOnlyReason(settings.docchiStreamForceMode, persistedDocchiMapping, seriesMappings);
   const useDocchiOnly = Boolean(docchiOnlyReason);
   const allowPartialRegularFallback = useDocchiOnly && settings.docchiStreamForceMode === "partial";
+  const docchiIndexing = buildDocchiIndexingRankingHints(persistedDocchiMapping, seriesMappings);
+  const rankingPreferences = {
+    preferredAudioLanguage: preferences.preferredAudioLanguage ?? settings.preferredAudioLanguage,
+    preferredSubtitleLanguage: preferences.preferredSubtitleLanguage ?? settings.preferredSubtitleLanguage,
+    docchiIndexing
+  };
+
+  if (docchiIndexing?.enabled) {
+    writeSystemLog("info", "aggregation", "Docchi indexing ranking boosts enabled for mapped series episode.", {
+      requestedId: id,
+      originalId: persistedDocchiMapping?.originalId,
+      mappedId: persistedDocchiMapping?.mappedId,
+      title: docchiIndexing.title,
+      ids: docchiIndexing.ids
+    });
+  }
+
   if (useDocchiOnly) {
     writeSystemLog("warn", "aggregation", "Docchi stream force mode skipped regular addons for mapped episode.", {
       mode: settings.docchiStreamForceMode,
@@ -184,6 +196,43 @@ function getDocchiOnlyReason(mode: string, mapping: EpisodeMappingSummary | unde
   return undefined;
 }
 
+function buildDocchiIndexingRankingHints(mapping: EpisodeMappingSummary | undefined, seriesMappings: EpisodeMappingSummary[]): DocchiIndexingRankingHints | undefined {
+  if (!mapping?.docchiId) return undefined;
+  const ids = [
+    { season: mapping.sourceSeason, episode: mapping.sourceEpisode, label: `source S${pad2(mapping.sourceSeason)}E${pad2(mapping.sourceEpisode)}` },
+    { season: mapping.mappedSeason, episode: mapping.mappedEpisode, label: `mapped S${pad2(mapping.mappedSeason)}E${pad2(mapping.mappedEpisode)}` },
+    ...seriesMappings
+      .filter((item) => item.originalId === mapping.originalId || item.mappedId === mapping.mappedId)
+      .flatMap((item) => [
+        { season: item.sourceSeason, episode: item.sourceEpisode, label: `source S${pad2(item.sourceSeason)}E${pad2(item.sourceEpisode)}` },
+        { season: item.mappedSeason, episode: item.mappedEpisode, label: `mapped S${pad2(item.mappedSeason)}E${pad2(item.mappedEpisode)}` }
+      ])
+  ];
+
+  return {
+    enabled: true,
+    title: mapping.docchiTitle,
+    ids: dedupeDocchiIndexingIds(ids)
+  };
+}
+
+function dedupeDocchiIndexingIds(ids: DocchiIndexingRankingHints["ids"]): DocchiIndexingRankingHints["ids"] {
+  const seen = new Set<string>();
+  const result: DocchiIndexingRankingHints["ids"] = [];
+  for (const item of ids) {
+    if (!Number.isFinite(item.season) || !Number.isFinite(item.episode) || item.season <= 0 || item.episode <= 0) continue;
+    const key = `${item.season}:${item.episode}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
 function countDistinct(values: Array<number | undefined>): number {
   return new Set(values.filter((value): value is number => Number.isFinite(value))).size;
 }
@@ -192,7 +241,7 @@ function countAddonStreams(results: AddonStreamFetchResult[]): number {
   return results.reduce((sum, result) => sum + result.streams.length, 0);
 }
 
-function selectBestPlayableCandidate(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string }): RankedStream | null {
+function selectBestPlayableCandidate(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string; docchiIndexing?: DocchiIndexingRankingHints }): RankedStream | null {
   return rankCandidateStreams(streams.filter((stream) => Boolean(stream.url || stream.externalUrl)), preferences)[0] ?? null;
 }
 
@@ -220,7 +269,7 @@ function mapExternalStream(addon: RegisteredAddon, stream: ExternalStremioStream
   };
 }
 
-async function validateStreamsByMode(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string }, mode: LinkValidationMode, timeoutMs: number): Promise<void> {
+async function validateStreamsByMode(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string; docchiIndexing?: DocchiIndexingRankingHints }, mode: LinkValidationMode, timeoutMs: number): Promise<void> {
   const ordered = rankCandidateStreams(streams, preferences);
   const targetWorkingCount = getTargetWorkingCount(mode);
   let workingCount = 0;
