@@ -165,7 +165,15 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 }
 
 function isDocchiAddon(addon: { name?: string; manifestUrl: string; description?: string }): boolean {
-  return /docc?h?i/i.test(`${addon.name ?? ""} ${addon.description ?? ""} ${addon.manifestUrl}`);
+  const manifestName = addon.name ?? "";
+  if (/docc?h?i/i.test(manifestName)) return true;
+
+  try {
+    const hostname = new URL(addon.manifestUrl).hostname;
+    return /(^|\.)(docci|docchi)\.pl$/i.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function toDiagnosticAggregatedStream(type: StreamType, mediaId: string, stream: any): AggregatedStream {
