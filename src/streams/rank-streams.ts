@@ -49,6 +49,13 @@ const codecScore: Record<string, number> = {
 export type StreamRankingPreferences = {
   preferredAudioLanguage: string;
   preferredSubtitleLanguage: string;
+  docchiIndexing?: DocchiIndexingRankingHints;
+};
+
+export type DocchiIndexingRankingHints = {
+  enabled: boolean;
+  title?: string;
+  ids: Array<{ season: number; episode: number; label: string }>;
 };
 
 export type RankedStream = RawAggregatedStream & {
@@ -87,6 +94,7 @@ function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPref
   const scoreReasons: string[] = [];
   const settings = getAppSettings();
   const rawText = `${stream.name ?? ""} ${stream.title ?? ""} ${stream.description ?? ""} ${String(stream.behaviorHints?.filename ?? "")}`;
+  const normalizedRawText = normalizeSearchText(rawText);
 
   if (includeWorkingBonus) {
     score += addScore(scoreReasons, "working", 10_000);
@@ -111,6 +119,7 @@ function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPref
     score += addScore(scoreReasons, `preferred language hint ${preferences.preferredAudioLanguage}`, 2_000);
   }
 
+  score += scoreDocchiIndexingHints(scoreReasons, rawText, normalizedRawText, preferences.docchiIndexing);
   score += addScore(scoreReasons, `quality ${stream.metadata.quality}`, qualityScore[stream.metadata.quality] ?? 0);
   score += addScore(scoreReasons, `source ${stream.metadata.source}`, sourceScore[stream.metadata.source] ?? 0);
   score += addScore(scoreReasons, `audio kind ${stream.metadata.audioKind}`, audioKindScore[stream.metadata.audioKind] ?? 0);
@@ -134,6 +143,76 @@ function scoreStream(stream: RawAggregatedStream, preferences: StreamRankingPref
 
   Object.assign(stream, { score, scoreReasons });
   return stream as RankedStream;
+}
+
+function scoreDocchiIndexingHints(scoreReasons: string[], rawText: string, normalizedRawText: string, hints?: DocchiIndexingRankingHints): number {
+  if (!hints?.enabled) return 0;
+
+  let score = 0;
+  const matchedEpisodeLabels = new Set<string>();
+  for (const item of hints.ids) {
+    if (item.season <= 0 || item.episode <= 0) continue;
+    if (!hasSeasonEpisodeHint(rawText, item.season, item.episode)) continue;
+    const label = `docchi indexed episode ${item.label}`;
+    if (matchedEpisodeLabels.has(label)) continue;
+    matchedEpisodeLabels.add(label);
+    score += addScore(scoreReasons, label, 5_000);
+  }
+
+  const title = normalizeSearchText(hints.title ?? "");
+  if (title && normalizedRawText.includes(title)) {
+    score += addScore(scoreReasons, `docchi indexed title "${hints.title}"`, 5_050);
+  }
+
+  const titleWords = splitTitleWords(hints.title ?? "");
+  for (const word of titleWords) {
+    if (!containsNormalizedWord(normalizedRawText, word)) continue;
+    score += addScore(scoreReasons, `docchi indexed title word "${word}"`, 2_500);
+  }
+
+  return score;
+}
+
+function hasSeasonEpisodeHint(value: string, season: number, episode: number): boolean {
+  const seasonText = String(season).padStart(2, "0");
+  const episodeText = String(episode).padStart(2, "0");
+  const looseEpisode = String(episode);
+  const patterns = [
+    new RegExp(`\\bS0?${season}\\s*[. _-]?\\s*E0?${episode}\\b`, "i"),
+    new RegExp(`\\b${seasonText}x${episodeText}\\b`, "i"),
+    new RegExp(`\\bseason\\s*0?${season}\\b[\\s\\S]{0,30}\\b(?:episode|ep)\\s*0?${episode}\\b`, "i"),
+    new RegExp(`\\bsezon\\s*0?${season}\\b[\\s\\S]{0,30}\\b(?:odcinek|odc|ep)\\s*0?${episode}\\b`, "i"),
+    new RegExp(`\\bS0?${season}E${looseEpisode}\\b`, "i")
+  ];
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function splitTitleWords(value: string): string[] {
+  return normalizeSearchText(value)
+    .split(" ")
+    .filter((word) => word.length >= 3 && !isWeakTitleWord(word));
+}
+
+function containsNormalizedWord(value: string, word: string): boolean {
+  return new RegExp(`(^|\\s)${escapeRegExp(word)}($|\\s)`, "i").test(value);
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9ąćęłńóśźż]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isWeakTitleWord(value: string): boolean {
+  return /^(a|an|and|by|da|de|do|drogi|dla|el|i|in|la|le|na|no|of|po|the|to|u|w|we|z|za)$/i.test(value);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function hasDebridHint(value: string): boolean {
