@@ -16,7 +16,7 @@ import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shoul
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { getAddonManifest } from "./stremio/manifest.js";
-import { toStremioSubtitleResponse, getSubtitleCache } from "./subtitles/subtitle-cache.js";
+import { toStremioSubtitleResponse, getSubtitleCache, getLocalSubtitle } from "./subtitles/subtitle-cache.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
@@ -84,7 +84,17 @@ app.get<{ Params: { type: "movie" | "series"; id: string } }>("/meta/:type/:id.j
 app.get<{ Params: { type: "movie" | "series"; id: string } }>("/subtitles/:type/:id.json", async (request, reply) => {
   const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) }).safeParse(request.params);
   if (!params.success) { reply.code(400); return { subtitles: [] }; }
-  return toStremioSubtitleResponse(getSubtitleCache(params.data.type, params.data.id));
+  const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`;
+  return toStremioSubtitleResponse(getSubtitleCache(params.data.type, params.data.id), requestBaseUrl);
+});
+app.get<{ Params: { type: "movie" | "series"; id: string; index: string } }>("/subtitles/local/:type/:id/:index.vtt", async (request, reply) => {
+  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1), index: z.coerce.number().int().min(0) }).safeParse(request.params);
+  if (!params.success) { reply.code(400); return "WEBVTT\n\n"; }
+  const subtitle = getLocalSubtitle(params.data.type, params.data.id, params.data.index);
+  if (!subtitle) { reply.code(404); return "WEBVTT\n\n"; }
+  reply.header("cache-control", "public, max-age=31536000, immutable");
+  reply.type(subtitle.contentType);
+  return subtitle.content;
 });
 app.get<{ Params: { type: "movie" | "series"; id: string } }>("/stream/:type/:id.json", async (request, reply) => {
   const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) }).safeParse(request.params);
