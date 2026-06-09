@@ -75,7 +75,9 @@ async function fetchAddonSubtitles(addon: RegisteredAddon, type: StreamType, id:
     if (!response.ok) throw new Error(`Subtitle request failed with HTTP ${response.status}.`);
     const json = await response.json();
     const parsed = subtitleResponseSchema.parse(json);
-    const subtitles = dedupeSubtitles(parsed.subtitles);
+    const normalizedSubtitles = parsed.subtitles.map((subtitle) => normalizeAnimeSubSubtitleUrl(subtitle, requestUrl));
+    const rewrittenCount = normalizedSubtitles.filter((subtitle, index) => subtitle.url && subtitle.url !== parsed.subtitles[index]?.url).length;
+    const subtitles = dedupeSubtitles(normalizedSubtitles);
     writeSystemLog(subtitles.length > 0 ? "info" : "warn", "animesub", "AnimeSub subtitle response received.", {
       addonId: addon.id,
       addonName: addon.name,
@@ -84,6 +86,7 @@ async function fetchAddonSubtitles(addon: RegisteredAddon, type: StreamType, id:
       requestUrl,
       responseTimeMs: Date.now() - startedAt,
       subtitleCount: subtitles.length,
+      rewrittenLocalhostUrls: rewrittenCount,
       subtitles: subtitles.slice(0, 20).map(toSubtitleLogSample)
     });
     return { addon, status: "fulfilled", responseTimeMs: Date.now() - startedAt, subtitles, requestUrl };
@@ -104,6 +107,31 @@ export function buildSubtitlesUrl(manifestUrl: string, type: StreamType, id: str
   return url.toString();
 }
 
+function normalizeAnimeSubSubtitleUrl(subtitle: ExternalSubtitle, requestUrl: string): ExternalSubtitle {
+  if (!subtitle.url) return subtitle;
+  const normalizedUrl = normalizeLocalhostUrl(subtitle.url, requestUrl);
+  if (normalizedUrl === subtitle.url) return subtitle;
+  return { ...subtitle, url: normalizedUrl, originalUrl: subtitle.url } as ExternalSubtitle;
+}
+
+function normalizeLocalhostUrl(rawUrl: string, addonRequestUrl: string): string {
+  try {
+    const subtitleUrl = new URL(rawUrl);
+    if (!isLocalhostHost(subtitleUrl.hostname)) return rawUrl;
+    const addonUrl = new URL(addonRequestUrl);
+    subtitleUrl.protocol = addonUrl.protocol;
+    subtitleUrl.hostname = addonUrl.hostname;
+    subtitleUrl.port = addonUrl.port;
+    return subtitleUrl.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function isLocalhostHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname === "[::1]";
+}
+
 function dedupeSubtitles(subtitles: ExternalSubtitle[]): ExternalSubtitle[] {
   const seen = new Set<string>();
   const result: ExternalSubtitle[] = [];
@@ -121,6 +149,7 @@ function toSubtitleLogSample(subtitle: ExternalSubtitle): Record<string, unknown
     id: subtitle.id,
     lang: subtitle.lang,
     name: subtitle.name,
-    url: subtitle.url
+    url: subtitle.url,
+    originalUrl: (subtitle as ExternalSubtitle & { originalUrl?: string }).originalUrl
   };
 }
