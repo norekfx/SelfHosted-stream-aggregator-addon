@@ -13,6 +13,7 @@ import { runMigrations } from "./db/migrations.js";
 import { applyPersistedDocchiMappingsToMeta, listDocchiEpisodeMappingsForSeries } from "./docchi/docchi-episode-mapping-store.js";
 import { findDocchiEpisodeFix } from "./docchi/docchi-public-mapper.js";
 import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shouldBypassMetadataCache } from "./libraries/library-cache.js";
+import { listActiveLibraryAutomationStatuses, listLibraryAutomationStatuses, startLibraryAutomationWorker } from "./libraries/library-automation.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { getAddonManifest } from "./stremio/manifest.js";
@@ -28,6 +29,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, "../public");
 
 runMigrations(getDatabase());
+startLibraryAutomationWorker();
 
 const app = Fastify({ logger: { transport: process.env.NODE_ENV === "production" ? undefined : { target: "pino-pretty" } } });
 
@@ -50,6 +52,7 @@ await app.register(registerAuthRoutes);
 await app.register(async (adminApp) => {
   adminApp.addHook("preHandler", requireAdminAuth);
   await registerAdminRoutes(adminApp);
+  adminApp.get("/admin/library-automation/status", async () => ({ active: listActiveLibraryAutomationStatuses(), statuses: listLibraryAutomationStatuses() }));
   adminApp.get<{ Params: { id: string } }>("/admin/docchi/episode/:id", async (request, reply) => {
     const params = z.object({ id: z.string().regex(/^tt\d+:\d+:\d+$/i) }).safeParse(request.params);
     if (!params.success) { reply.code(400); return { error: "Invalid episode id." }; }
@@ -103,23 +106,7 @@ app.get<{ Params: { type: "movie" | "series"; id: string } }>("/stream/:type/:id
   const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`;
   return { streams: createVisibleStreamOptions(bestOriginal, requestBaseUrl) };
 });
-app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (request, reply) => {
-  const original = getSelectedOriginal(request.params.streamId);
-  if (!original?.originalUrl) { reply.code(404); return { error: "Selected original stream was not found or has expired." }; }
-  reply.redirect(original.originalUrl);
-});
-
-async function handleCatalogRequest(rawParams: unknown, reply: { code: (statusCode: number) => unknown }) {
-  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1), extra: z.string().optional() }).safeParse(rawParams);
-  if (!params.success) { reply.code(400); return { metas: [] }; }
-  const library = getLibraryForCatalog(params.data.type, params.data.id);
-  if (!library) return { metas: [] };
-  const page = parseCatalogPage(params.data.extra);
-  const cached = shouldBypassMetadataCache() ? undefined : getCachedLibraryItems(library.id, page);
-  if (cached) return { metas: cached };
-  const metas = await fetchTmdbCatalog(library, page);
-  if (!shouldBypassMetadataCache()) saveLibraryItems(library.id, page, metas);
-  return { metas };
-}
+app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (request, reply) => { const original = getSelectedOriginal(request.params.streamId); if (!original?.originalUrl) { reply.code(404); return { error: "Selected original stream was not found or has expired." }; } reply.redirect(original.originalUrl); });
+async function handleCatalogRequest(rawParams: unknown, reply: { code: (statusCode: number) => unknown }) { const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1), extra: z.string().optional() }).safeParse(rawParams); if (!params.success) { reply.code(400); return { metas: [] }; } const library = getLibraryForCatalog(params.data.type, params.data.id); if (!library) return { metas: [] }; const page = parseCatalogPage(params.data.extra); const cached = shouldBypassMetadataCache() ? undefined : getCachedLibraryItems(library.id, page); if (cached) return { metas: cached }; const metas = await fetchTmdbCatalog(library, page); if (!shouldBypassMetadataCache()) saveLibraryItems(library.id, page, metas); return { metas }; }
 function parseCatalogPage(extra?: string): number { if (!extra) return 1; const match = extra.match(/(?:^|&)skip=(\d+)/); const skip = match ? Number.parseInt(match[1] ?? "0", 10) : 0; if (!Number.isFinite(skip) || skip <= 0) return 1; return Math.floor(skip / 30) + 1; }
 await app.listen({ host: env.HOST, port: env.PORT });
