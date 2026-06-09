@@ -181,6 +181,24 @@ const migrations: Array<{ id: number; name: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_meta_cache_media ON meta_cache(type, imdb_id);
       CREATE INDEX IF NOT EXISTS idx_meta_cache_expires_at ON meta_cache(expires_at);
     `
+  },
+  {
+    id: 8,
+    name: "create_subtitle_cache",
+    sql: `
+      CREATE TABLE IF NOT EXISTS subtitle_cache (
+        cache_key TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        media_id TEXT NOT NULL,
+        subtitles_json TEXT NOT NULL DEFAULT '[]',
+        addon_results_json TEXT NOT NULL DEFAULT '[]',
+        fetched_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_subtitle_cache_media ON subtitle_cache(type, media_id);
+      CREATE INDEX IF NOT EXISTS idx_subtitle_cache_updated_at ON subtitle_cache(updated_at);
+    `
   }
 ];
 
