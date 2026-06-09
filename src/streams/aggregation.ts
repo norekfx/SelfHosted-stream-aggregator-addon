@@ -70,6 +70,7 @@ export async function aggregateStreams(
   const seriesMappings = persistedDocchiMapping ? listDocchiEpisodeMappingsForSeries(persistedDocchiMapping.seriesId) : [];
   const docchiOnlyReason = getDocchiOnlyReason(settings.docchiStreamForceMode, persistedDocchiMapping, seriesMappings);
   const useDocchiOnly = Boolean(docchiOnlyReason);
+  const allowPartialRegularFallback = useDocchiOnly && settings.docchiStreamForceMode === "partial";
   if (useDocchiOnly) {
     writeSystemLog("warn", "aggregation", "Docchi stream force mode skipped regular addons for mapped episode.", {
       mode: settings.docchiStreamForceMode,
@@ -81,7 +82,8 @@ export async function aggregateStreams(
       sourceSeasons: countDistinct(seriesMappings.map((mapping) => mapping.sourceSeason)),
       mappedSeasons: countDistinct(seriesMappings.map((mapping) => mapping.mappedSeason)),
       mappedEpisodes: seriesMappings.length,
-      skippedRegularAddons: activeAddons.length
+      skippedRegularAddons: activeAddons.length,
+      partialFallbackEnabled: allowPartialRegularFallback
     });
   } else if (persistedDocchiMapping && regularAddonId !== id) {
     writeSystemLog("info", "aggregation", "Using original TMDB/IMDb episode id for regular addons and mapped Docchi id for Docchi.", {
@@ -94,10 +96,38 @@ export async function aggregateStreams(
     });
   }
 
-  const [regularAddonResults, docchiFixedResults] = await Promise.all([
-    useDocchiOnly ? Promise.resolve([] as AddonStreamFetchResult[]) : Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, regularAddonId))),
-    fetchDocchiFixedStreams(type, id)
-  ]);
+  let regularAddonResults: AddonStreamFetchResult[] = [];
+  const docchiFixedResults = await fetchDocchiFixedStreams(type, id);
+  const docchiStreamCount = countAddonStreams(docchiFixedResults);
+
+  if (useDocchiOnly && docchiStreamCount > 0) {
+    writeSystemLog("info", "aggregation", "Docchi returned streams, regular addons remain skipped.", {
+      mode: settings.docchiStreamForceMode,
+      reason: docchiOnlyReason,
+      requestedId: id,
+      docchiId: persistedDocchiMapping?.docchiId,
+      docchiAddonResults: docchiFixedResults.length,
+      docchiStreamCount,
+      skippedRegularAddons: activeAddons.length
+    });
+  } else if (allowPartialRegularFallback && docchiStreamCount === 0) {
+    writeSystemLog("warn", "aggregation", "Docchi did not return streams, checking regular addons.", {
+      mode: settings.docchiStreamForceMode,
+      reason: docchiOnlyReason,
+      requestedId: id,
+      originalId: persistedDocchiMapping?.originalId,
+      mappedId: persistedDocchiMapping?.mappedId,
+      docchiId: persistedDocchiMapping?.docchiId,
+      docchiAddonResults: docchiFixedResults.length,
+      docchiStreamCount,
+      regularAddonId,
+      regularAddonCount: activeAddons.length
+    });
+    regularAddonResults = await Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, regularAddonId)));
+  } else if (!useDocchiOnly) {
+    regularAddonResults = await Promise.all(activeAddons.map((addon) => fetchAddonStreams(addon, type, regularAddonId)));
+  }
+
   const addonResults = [...regularAddonResults, ...docchiFixedResults];
 
   const rawStreams = addonResults.flatMap((result) =>
@@ -127,7 +157,7 @@ export async function aggregateStreams(
     type,
     id,
     searchedAt: new Date().toISOString(),
-    addonCount: useDocchiOnly ? docchiFixedResults.length : activeAddons.length,
+    addonCount: addonResults.length,
     successfulAddonCount: addonResults.filter((result) => result.status === "fulfilled").length,
     failedAddonCount: addonResults.filter((result) => result.status === "rejected").length,
     streamCount: streams.length,
@@ -156,6 +186,10 @@ function getDocchiOnlyReason(mode: string, mapping: EpisodeMappingSummary | unde
 
 function countDistinct(values: Array<number | undefined>): number {
   return new Set(values.filter((value): value is number => Number.isFinite(value))).size;
+}
+
+function countAddonStreams(results: AddonStreamFetchResult[]): number {
+  return results.reduce((sum, result) => sum + result.streams.length, 0);
 }
 
 function selectBestPlayableCandidate(streams: RawAggregatedStream[], preferences: { preferredAudioLanguage: string; preferredSubtitleLanguage: string }): RankedStream | null {
