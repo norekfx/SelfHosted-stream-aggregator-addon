@@ -14,6 +14,8 @@ import { aggregateStreams } from "../streams/aggregation.js";
 import { saveSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream, StreamType } from "../streams/types.js";
 import { TRANSCODE_QUALITIES } from "../stremio/manifest.js";
+import { fetchAnimeSubSubtitles, isAnimeSubAddon } from "../subtitles/animesub-client.js";
+import { clearSubtitleCache, getSubtitleCache, listSubtitleCache, saveSubtitleCache } from "../subtitles/subtitle-cache.js";
 import { clearSystemLogs, listSystemLogs, type SystemLogLevel, writeSystemLog } from "../system/system-log.js";
 import { runTechnicalHealthCheck } from "../system/technical-health.js";
 import { fetchTmdbCatalog, fetchTmdbWatchProviders } from "../tmdb/tmdb-client.js";
@@ -98,12 +100,38 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const addons = listAddons();
     const matches = addons.filter(isDocchiAddon);
     const enabled = matches.filter((addon) => addon.enabled && addon.status === "online");
-    return {
-      detected: matches.length > 0,
-      enabled: enabled.length > 0,
-      addons: matches.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, enabled: addon.enabled, status: addon.status }))
-    };
+    return { detected: matches.length > 0, enabled: enabled.length > 0, addons: matches.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, enabled: addon.enabled, status: addon.status })) };
   });
+
+  app.get("/admin/animesub/status", async () => {
+    const addons = listAddons();
+    const matches = addons.filter(isAnimeSubAddon);
+    const enabled = matches.filter((addon) => addon.enabled && addon.status === "online" && addon.supportedResources.includes("subtitles"));
+    return { detected: matches.length > 0, enabled: enabled.length > 0, addons: matches.map((addon) => ({ id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, enabled: addon.enabled, status: addon.status, supportedResources: addon.supportedResources })) };
+  });
+
+  app.get<{ Params: { type: StreamType; id: string } }>("/admin/animesub/:type/:id", async (request, reply) => {
+    const params = aggregateParamsSchema.safeParse(request.params);
+    if (!params.success) { reply.code(400); return { error: "Invalid AnimeSub subtitle parameters.", details: params.error.flatten() }; }
+    return { cache: getSubtitleCache(params.data.type, params.data.id) ?? null };
+  });
+
+  app.post<{ Params: { type: StreamType; id: string } }>("/admin/animesub/:type/:id/fetch", async (request, reply) => {
+    const params = aggregateParamsSchema.safeParse(request.params);
+    if (!params.success) { reply.code(400); return { error: "Invalid AnimeSub subtitle parameters.", details: params.error.flatten() }; }
+    writeSystemLog("info", "animesub", "Manual AnimeSub subtitle fetch requested.", params.data);
+    const results = await fetchAnimeSubSubtitles(params.data.type, params.data.id);
+    const cache = saveSubtitleCache(params.data.type, params.data.id, results);
+    return { cache };
+  });
+
+  app.get<{ Querystring: { limit?: string } }>("/admin/animesub/cache", async (request, reply) => {
+    const query = limitQuerySchema.safeParse(request.query);
+    if (!query.success) { reply.code(400); return { error: "Invalid subtitle cache query.", details: query.error.flatten() }; }
+    return { cache: listSubtitleCache(query.data.limit) };
+  });
+
+  app.delete<{ Params: { type?: StreamType; id?: string } }>("/admin/animesub/cache", async () => ({ ok: true, deleted: clearSubtitleCache() }));
 
   app.get("/admin/docchi/kometa/status", async () => ({ kometa: getKometaAnimeIdsStatus() }));
   app.post("/admin/docchi/kometa/sync", async () => ({ kometa: await syncKometaAnimeIds(true) }));
@@ -129,12 +157,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { settings, kometa };
   });
 
-  app.get<{ Params: { type: "movie" | "series" } }>("/admin/tmdb/watch-providers/:type", async (request, reply) => {
-    const params = z.object({ type: z.enum(["movie", "series"]) }).safeParse(request.params);
-    if (!params.success) { reply.code(400); return { error: "Invalid provider type." }; }
-    return { providers: await fetchTmdbWatchProviders(params.data.type) };
-  });
-
+  app.get<{ Params: { type: "movie" | "series" } }>("/admin/tmdb/watch-providers/:type", async (request, reply) => { const params = z.object({ type: z.enum(["movie", "series"]) }).safeParse(request.params); if (!params.success) { reply.code(400); return { error: "Invalid provider type." }; } return { providers: await fetchTmdbWatchProviders(params.data.type) }; });
   app.get("/admin/libraries", async () => ({ libraries: listLibraries() }));
   app.post("/admin/libraries", async (request, reply) => { const body = librarySchema.safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid library payload.", details: body.error.flatten() }; } const library = createLibrary(body.data); writeSystemLog("info", "libraries", "Library created.", { id: library.id, name: library.name, type: library.type, mode: library.mode }); reply.code(201); return { library }; });
   app.patch("/admin/libraries/:id", async (request, reply) => { const body = librarySchema.partial().safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid library update payload.", details: body.error.flatten() }; } const id = (request.params as { id: string }).id; const library = updateLibrary(id, body.data); if (!library) { reply.code(404); return { error: "Library not found." }; } clearLibraryCache(library.id); writeSystemLog("info", "libraries", "Library updated.", { id: library.id, name: library.name }); return { library }; });
@@ -145,12 +168,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get("/admin/system/health", async () => { const report = await runTechnicalHealthCheck(); writeSystemLog(report.status === "error" ? "error" : report.status === "warn" ? "warn" : "info", "health", "Technical health-check completed.", { status: report.status }); return { report }; });
   app.get<{ Querystring: { limit?: string; level?: SystemLogLevel } }>("/admin/system/logs", async (request, reply) => { const query = logsQuerySchema.safeParse(request.query); if (!query.success) { reply.code(400); return { error: "Invalid logs query.", details: query.error.flatten() }; } return { logs: listSystemLogs(query.data.limit, query.data.level) }; });
   app.delete("/admin/system/logs", async () => { clearSystemLogs(); writeSystemLog("info", "logs", "System logs cleared."); return { ok: true }; });
-  app.get("/admin/addons", async () => ({ addons: listAddons().map((addon) => ({ ...addon, detectedDocchi: isDocchiAddon(addon) })) }));
-  app.post("/admin/addons", async (request, reply) => { const body = registerAddonSchema.safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid addon registration payload.", details: body.error.flatten() }; } const addon = await registerAddon(body.data); writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon registered.", { id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, status: addon.status, lastError: addon.lastError }); reply.code(201); return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
-
+  app.get("/admin/addons", async () => ({ addons: listAddons().map(toAdminAddon) }));
+  app.post("/admin/addons", async (request, reply) => { const body = registerAddonSchema.safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid addon registration payload.", details: body.error.flatten() }; } const addon = await registerAddon(body.data); writeSystemLog(addon.status === "online" ? "info" : "warn", "addons", "Addon registered.", { id: addon.id, name: addon.name, manifestUrl: addon.manifestUrl, status: addon.status, lastError: addon.lastError, detectedAnimeSub: isAnimeSubAddon(addon) }); reply.code(201); return { addon: toAdminAddon(addon) }; });
   app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/aggregate/:type/:id", async (request, reply) => { const params = aggregateParamsSchema.safeParse(request.params); if (!params.success) { reply.code(400); return { error: "Invalid aggregation parameters.", details: params.error.flatten() }; } writeSystemLog("info", "diagnostics", "Aggregation diagnostics started.", params.data); const result = await aggregateStreams(params.data.type, params.data.id); writeSystemLog(result.selectedOriginal ? "info" : "warn", "diagnostics", "Aggregation diagnostics completed.", { type: result.type, id: result.id, streamCount: result.streamCount, workingStreamCount: result.workingStreamCount, failedStreamCount: result.failedStreamCount, unsupportedStreamCount: result.unsupportedStreamCount, selectedOriginal: result.selectedOriginal?.title }); if (getAppSettings().showDiagnosticDetails) return result; return { type: result.type, id: result.id, searchedAt: result.searchedAt, addonCount: result.addonCount, successfulAddonCount: result.successfulAddonCount, failedAddonCount: result.failedAddonCount, streamCount: result.streamCount, workingStreamCount: result.workingStreamCount, failedStreamCount: result.failedStreamCount, unsupportedStreamCount: result.unsupportedStreamCount, selectedOriginal: result.selectedOriginal }; });
   app.get<{ Params: { type: "movie" | "series"; id: string } }>("/admin/transcode/candidates/:type/:id", async (request, reply) => { const params = aggregateParamsSchema.safeParse(request.params); if (!params.success) { reply.code(400); return { error: "Invalid transcode diagnostics parameters.", details: params.error.flatten() }; } writeSystemLog("info", "transcode-diagnostics", "Transcode candidates scan started.", params.data); const result = await aggregateStreams(params.data.type, params.data.id); const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`; const candidates = result.rankedStreams.slice(0, 50).map((stream) => { const original = toDiagnosticAggregatedStream(params.data.type, params.data.id, stream); saveSelectedOriginal(original); const encodedId = encodeURIComponent(original.id); return { id: original.id, title: original.title, addon: original.sourceAddon, originalUrl: original.originalUrl, quality: original.quality, audioLanguage: original.audioLanguage, subtitleLanguage: original.subtitleLanguage, validationReason: original.validationReason, score: stream.score, scoreReasons: stream.scoreReasons, urls: { original: original.originalUrl, ...Object.fromEntries(TRANSCODE_QUALITIES.map((quality) => [quality, `${requestBaseUrl}/transcode/${encodedId}/${quality}/master.m3u8`])) } }; }); writeSystemLog("info", "transcode-diagnostics", "Transcode candidates scan completed.", { ...params.data, candidates: candidates.length, workingStreamCount: result.workingStreamCount }); return { type: params.data.type, id: params.data.id, candidates }; });
-
   app.get<{ Querystring: { limit?: string } }>("/admin/cache", async (request, reply) => { const query = limitQuerySchema.safeParse(request.query); if (!query.success) { reply.code(400); return { error: "Invalid cache query.", details: query.error.flatten() }; } return { cache: listCachedSearchResults(query.data.limit) }; });
   app.delete("/admin/cache", async () => { const deleted = clearSearchCache(); writeSystemLog("info", "cache", "Search cache cleared.", { deleted }); return { ok: true, deleted }; });
   app.get<{ Params: { type: StreamType; id: string } }>("/admin/cache/:type/:id/refresh", async (request, reply) => { const params = aggregateParamsSchema.safeParse(request.params); if (!params.success) { reply.code(400); return { error: "Invalid refresh parameters.", details: params.error.flatten() }; } await refreshNow(params.data.type, params.data.id); return getCachedSearchResult(params.data.type, params.data.id) ?? { status: "refreshing" }; });
@@ -158,22 +179,20 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { limit?: string } }>("/admin/history", async (request, reply) => { const query = limitQuerySchema.safeParse(request.query); if (!query.success) { reply.code(400); return { error: "Invalid history query.", details: query.error.flatten() }; } return { history: listSearchHistory(query.data.limit) }; });
   app.delete("/admin/history", async () => { const deleted = clearSearchHistory(); writeSystemLog("info", "history", "Search history cleared.", { deleted }); return { ok: true, deleted }; });
   app.get<{ Params: { historyId: string } }>("/admin/history/:historyId", async (request, reply) => { const details = getSearchHistoryDetails(request.params.historyId); if (!details) { reply.code(404); return { error: "History entry not found." }; } return { details }; });
-  app.get("/admin/addons/:id", async (request, reply) => { const id = (request.params as { id: string }).id; const addon = getAddon(id); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
-  app.post("/admin/addons/:id/check", async (request, reply) => { const id = (request.params as { id: string }).id; const addon = await refreshAddonHealth(id); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
-  app.patch("/admin/addons/:id", async (request, reply) => { const body = updateAddonSchema.safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid addon update payload.", details: body.error.flatten() }; } const id = (request.params as { id: string }).id; const addon = setAddonEnabled(id, body.data.enabled); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: { ...addon, detectedDocchi: isDocchiAddon(addon) } }; });
+  app.get("/admin/addons/:id", async (request, reply) => { const id = (request.params as { id: string }).id; const addon = getAddon(id); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: toAdminAddon(addon) }; });
+  app.post("/admin/addons/:id/check", async (request, reply) => { const id = (request.params as { id: string }).id; const addon = await refreshAddonHealth(id); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: toAdminAddon(addon) }; });
+  app.patch("/admin/addons/:id", async (request, reply) => { const body = updateAddonSchema.safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid addon update payload.", details: body.error.flatten() }; } const id = (request.params as { id: string }).id; const addon = setAddonEnabled(id, body.data.enabled); if (!addon) { reply.code(404); return { error: "Addon not found." }; } return { addon: toAdminAddon(addon) }; });
   app.delete("/admin/addons/:id", async (request, reply) => { const id = (request.params as { id: string }).id; const result = deleteAddon(id); if (result.status === "not_found") { reply.code(404); return { error: "Addon not found." }; } if (result.status === "enabled") { reply.code(409); return { error: "Disable addon before deleting it.", addon: result.addon }; } writeSystemLog("info", "addons", "Addon deleted.", { id: result.addon.id, name: result.addon.name, manifestUrl: result.addon.manifestUrl }); return { ok: true, addon: result.addon }; });
 }
 
 function isDocchiAddon(addon: { name?: string; manifestUrl: string; description?: string }): boolean {
   const manifestName = addon.name ?? "";
   if (/docc?h?i/i.test(manifestName)) return true;
+  try { const hostname = new URL(addon.manifestUrl).hostname; return /(^|\.)(docci|docchi)\.pl$/i.test(hostname); } catch { return false; }
+}
 
-  try {
-    const hostname = new URL(addon.manifestUrl).hostname;
-    return /(^|\.)(docci|docchi)\.pl$/i.test(hostname);
-  } catch {
-    return false;
-  }
+function toAdminAddon(addon: any) {
+  return { ...addon, detectedDocchi: isDocchiAddon(addon), detectedAnimeSub: isAnimeSubAddon(addon) };
 }
 
 function toDiagnosticAggregatedStream(type: StreamType, mediaId: string, stream: any): AggregatedStream {
