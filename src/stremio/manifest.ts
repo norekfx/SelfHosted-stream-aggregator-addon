@@ -89,7 +89,7 @@ export function getAddonManifest() {
   const libraries = listEnabledLibraries();
   return {
     ...baseManifest,
-    resources: libraries.length ? ["stream", "catalog", "meta"] : ["stream"],
+    resources: libraries.length ? ["stream", "catalog", "meta", "subtitles"] : ["stream", "subtitles"],
     catalogs: libraries.map((library) => ({
       type: library.type,
       id: library.slug,
