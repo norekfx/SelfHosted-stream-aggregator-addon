@@ -35,17 +35,18 @@ const app = Fastify({ logger: { transport: process.env.NODE_ENV === "production"
 
 await app.register(cors, { origin: true });
 app.get("/app.js", async (_, reply) => {
-  const [mainScript, addonDeleteHelper, libraryEpisodeIdHelper, animeSubLibraryHelper, docchiPublicMappingHelper, docchiDebugExportHelper] = await Promise.all([
+  const [mainScript, addonDeleteHelper, libraryEpisodeIdHelper, animeSubLibraryHelper, libraryAutomationHelper, docchiPublicMappingHelper, docchiDebugExportHelper] = await Promise.all([
     readFile(join(publicDir, "app.js"), "utf-8"),
     readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => ""),
     readFile(join(publicDir, "library-episode-id-helper.js"), "utf-8").catch(() => ""),
     readFile(join(publicDir, "animesub-library-helper.js"), "utf-8").catch(() => ""),
+    readFile(join(publicDir, "library-automation-helper.js"), "utf-8").catch(() => ""),
     readFile(join(publicDir, "docchi-public-mapping-helper.js"), "utf-8").catch(() => ""),
     readFile(join(publicDir, "docchi-debug-export-helper.js"), "utf-8").catch(() => "")
   ]);
   reply.header("cache-control", "no-store, max-age=0");
   reply.type("application/javascript; charset=utf-8");
-  return `${mainScript}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}\n\n${animeSubLibraryHelper}\n\n${docchiPublicMappingHelper}\n\n${docchiDebugExportHelper}`;
+  return `${mainScript}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}\n\n${animeSubLibraryHelper}\n\n${libraryAutomationHelper}\n\n${docchiPublicMappingHelper}\n\n${docchiDebugExportHelper}`;
 });
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
@@ -99,13 +100,7 @@ app.get<{ Params: { type: "movie" | "series"; id: string; index: string } }>("/s
   reply.type(subtitle.contentType);
   return subtitle.content;
 });
-app.get<{ Params: { type: "movie" | "series"; id: string } }>("/stream/:type/:id.json", async (request, reply) => {
-  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) }).safeParse(request.params);
-  if (!params.success) { reply.code(400); return { streams: [] }; }
-  const bestOriginal = await findBestValidatedStream(params.data.type, params.data.id);
-  const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`;
-  return { streams: createVisibleStreamOptions(bestOriginal, requestBaseUrl) };
-});
+app.get<{ Params: { type: "movie" | "series"; id: string } }>("/stream/:type/:id.json", async (request, reply) => { const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) }).safeParse(request.params); if (!params.success) { reply.code(400); return { streams: [] }; } const bestOriginal = await findBestValidatedStream(params.data.type, params.data.id); const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`; return { streams: createVisibleStreamOptions(bestOriginal, requestBaseUrl) }; });
 app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (request, reply) => { const original = getSelectedOriginal(request.params.streamId); if (!original?.originalUrl) { reply.code(404); return { error: "Selected original stream was not found or has expired." }; } reply.redirect(original.originalUrl); });
 async function handleCatalogRequest(rawParams: unknown, reply: { code: (statusCode: number) => unknown }) { const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1), extra: z.string().optional() }).safeParse(rawParams); if (!params.success) { reply.code(400); return { metas: [] }; } const library = getLibraryForCatalog(params.data.type, params.data.id); if (!library) return { metas: [] }; const page = parseCatalogPage(params.data.extra); const cached = shouldBypassMetadataCache() ? undefined : getCachedLibraryItems(library.id, page); if (cached) return { metas: cached }; const metas = await fetchTmdbCatalog(library, page); if (!shouldBypassMetadataCache()) saveLibraryItems(library.id, page, metas); return { metas }; }
 function parseCatalogPage(extra?: string): number { if (!extra) return 1; const match = extra.match(/(?:^|&)skip=(\d+)/); const skip = match ? Number.parseInt(match[1] ?? "0", 10) : 0; if (!Number.isFinite(skip) || skip <= 0) return 1; return Math.floor(skip / 30) + 1; }
