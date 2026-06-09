@@ -1,8 +1,10 @@
 import { getDatabase } from "../db/database.js";
+import { getEffectivePublicBaseUrl } from "../settings/app-settings.js";
 import type { StreamType } from "../streams/types.js";
 import type { AnimeSubSubtitleFetchResult, ExternalSubtitle } from "./animesub-client.js";
+import { getLocalSubtitleContent, toPublicSubtitle, type LocalCachedSubtitle } from "./subtitle-local-cache.js";
 
-export type CachedSubtitle = ExternalSubtitle & {
+export type CachedSubtitle = LocalCachedSubtitle & {
   addonId: string;
   addonName?: string;
   requestUrl?: string;
@@ -68,8 +70,14 @@ export function clearSubtitleCache(type?: StreamType, mediaId?: string): number 
   return result.changes;
 }
 
-export function toStremioSubtitleResponse(entry: SubtitleCacheEntry | undefined): { subtitles: ExternalSubtitle[] } {
-  return { subtitles: entry?.subtitles.map(({ addonId, addonName, requestUrl, fetchedAt, ...subtitle }) => subtitle) ?? [] };
+export function getLocalSubtitle(type: StreamType, mediaId: string, index: number): { content: string; contentType: string } | undefined {
+  const entry = getSubtitleCache(type, mediaId);
+  return getLocalSubtitleContent(entry?.subtitles[index]);
+}
+
+export function toStremioSubtitleResponse(entry: SubtitleCacheEntry | undefined, publicBaseUrl?: string): { subtitles: ExternalSubtitle[] } {
+  const baseUrl = (publicBaseUrl ?? getEffectivePublicBaseUrl() ?? "").replace(/\/$/, "");
+  return { subtitles: entry?.subtitles.map(({ addonId, addonName, requestUrl, fetchedAt, ...subtitle }) => toPublicSubtitle(subtitle, baseUrl)) ?? [] };
 }
 
 function rowToEntry(row: SubtitleCacheRow): SubtitleCacheEntry {
