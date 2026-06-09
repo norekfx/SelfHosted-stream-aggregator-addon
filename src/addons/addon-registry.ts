@@ -26,8 +26,6 @@ export type DeleteAddonResult =
   | { status: "enabled"; addon: RegisteredAddon }
   | { status: "not_found" };
 
-const DOCCHI_DETECTION_HINT = "Docchi-compatible anime stream";
-
 export async function registerAddon(input: AddonRegistrationInput): Promise<RegisteredAddon> {
   const manifestUrl = normalizeManifestUrl(input.manifestUrl);
   const existing = findAddonByManifestUrl(manifestUrl);
@@ -47,7 +45,7 @@ export async function registerAddon(input: AddonRegistrationInput): Promise<Regi
     manifestUrl,
     name: manifest?.name,
     version: manifest?.version,
-    description: applyDocchiDetectionHint(manifest?.description, supportedResources, supportedTypes, manifest?.idPrefixes),
+    description: manifest?.description,
     supportedResources,
     supportedTypes,
     status: health.status,
@@ -95,7 +93,7 @@ export async function refreshAddonHealth(addonId: string): Promise<RegisteredAdd
     ...addon,
     name: manifest?.name ?? addon.name,
     version: manifest?.version ?? addon.version,
-    description: applyDocchiDetectionHint(manifest?.description ?? addon.description, supportedResources, supportedTypes, manifest?.idPrefixes),
+    description: manifest?.description ?? addon.description,
     supportedResources,
     supportedTypes,
     status: health.status,
@@ -220,16 +218,14 @@ function updateAddon(addon: RegisteredAddon): void {
 }
 
 function mapAddonRow(row: AddonRow): RegisteredAddon {
-  const supportedResources = parseJsonArray<AddonResource>(row.supported_resources_json);
-  const supportedTypes = parseJsonArray<string>(row.supported_types_json);
   return {
     id: row.id,
     manifestUrl: row.manifest_url,
     name: row.name ?? undefined,
     version: row.version ?? undefined,
-    description: applyDocchiDetectionHint(row.description ?? undefined, supportedResources, supportedTypes),
-    supportedResources,
-    supportedTypes,
+    description: row.description ?? undefined,
+    supportedResources: parseJsonArray<AddonResource>(row.supported_resources_json),
+    supportedTypes: parseJsonArray<string>(row.supported_types_json),
     status: row.status,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
@@ -274,13 +270,4 @@ function extractSupportedTypes(manifest: ExternalAddonManifest): string[] {
     }
   }
   return Array.from(supported);
-}
-
-function applyDocchiDetectionHint(description: string | undefined, supportedResources: string[], supportedTypes: string[], idPrefixes: string[] = []): string | undefined {
-  const text = description ?? "";
-  if (/docc?h?i/i.test(text) || text.includes(DOCCHI_DETECTION_HINT)) return description;
-  const hasAnimeStream = supportedResources.includes("stream") && supportedTypes.some((type) => /^(anime|mal|kitsu)$/i.test(type));
-  const hasAnimePrefix = idPrefixes.some((prefix) => /^(mal|kitsu)$/i.test(prefix));
-  if (!hasAnimeStream && !hasAnimePrefix) return description;
-  return text ? `${text} ${DOCCHI_DETECTION_HINT}` : DOCCHI_DETECTION_HINT;
 }
