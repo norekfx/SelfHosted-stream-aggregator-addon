@@ -55,6 +55,7 @@ export type StreamRankingPreferences = {
 export type DocchiIndexingRankingHints = {
   enabled: boolean;
   title?: string;
+  titles?: string[];
   ids: Array<{ season: number; episode: number; label: string }>;
 };
 
@@ -159,18 +160,34 @@ function scoreDocchiIndexingHints(scoreReasons: string[], rawText: string, norma
     score += addScore(scoreReasons, label, 5_000);
   }
 
-  const title = normalizeSearchText(hints.title ?? "");
-  if (title && normalizedRawText.includes(title)) {
-    score += addScore(scoreReasons, `docchi indexed title "${hints.title}"`, 5_050);
-  }
+  const titles = normalizeTitles(hints);
+  const matchedWords = new Set<string>();
+  for (const title of titles) {
+    if (title.normalized && normalizedRawText.includes(title.normalized)) {
+      score += addScore(scoreReasons, `docchi indexed title "${title.display}"`, 5_050);
+    }
 
-  const titleWords = splitTitleWords(hints.title ?? "");
-  for (const word of titleWords) {
-    if (!containsNormalizedWord(normalizedRawText, word)) continue;
-    score += addScore(scoreReasons, `docchi indexed title word "${word}"`, 2_500);
+    for (const word of splitTitleWords(title.display)) {
+      if (matchedWords.has(word) || !containsNormalizedWord(normalizedRawText, word)) continue;
+      matchedWords.add(word);
+      score += addScore(scoreReasons, `docchi indexed title word "${word}"`, 2_500);
+    }
   }
 
   return score;
+}
+
+function normalizeTitles(hints: DocchiIndexingRankingHints): Array<{ display: string; normalized: string }> {
+  const rawTitles = [...(hints.titles ?? []), hints.title].filter((value): value is string => Boolean(value?.trim()));
+  const seen = new Set<string>();
+  const result: Array<{ display: string; normalized: string }> = [];
+  for (const rawTitle of rawTitles) {
+    const normalized = normalizeSearchText(rawTitle);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push({ display: rawTitle, normalized });
+  }
+  return result;
 }
 
 function hasSeasonEpisodeHint(value: string, season: number, episode: number): boolean {
