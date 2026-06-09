@@ -16,6 +16,7 @@ import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shoul
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { getAddonManifest } from "./stremio/manifest.js";
+import { toStremioSubtitleResponse, getSubtitleCache } from "./subtitles/subtitle-cache.js";
 import { findBestValidatedStream } from "./streams/mock-aggregator.js";
 import { getSelectedOriginal } from "./streams/original-store.js";
 import { createVisibleStreamOptions } from "./streams/quality-options.js";
@@ -69,46 +70,25 @@ await app.register(async (adminApp) => {
     const mappings = listDocchiEpisodeMappingsForSeries(params.data.id);
     const mappedSeasons = Array.from(new Set(mappings.map((mapping) => mapping.mappedSeason))).sort((a, b) => a - b);
     const latestUpdatedAt = mappings.map((mapping) => mapping.updatedAt).sort().at(-1);
-    return {
-      seriesId: params.data.id,
-      fixed: mappings.length > 0,
-      mappedCount: mappings.length,
-      mappedSeasons,
-      latestUpdatedAt
-    };
+    return { seriesId: params.data.id, fixed: mappings.length > 0, mappedCount: mappings.length, mappedSeasons, latestUpdatedAt };
   });
 });
 await app.register(registerTranscodeRoutes);
 await app.register(registerTranscodeVodRoutes);
 
 app.get("/health", async () => ({ status: "ok" }));
-
 app.get("/manifest.json", async () => getAddonManifest());
 
-app.get<{ Params: { type: "movie" | "series"; id: string } }>("/catalog/:type/:id.json", async (request, reply) => {
-  return handleCatalogRequest(request.params, reply);
-});
-
-app.get<{ Params: { type: "movie" | "series"; id: string; extra: string } }>("/catalog/:type/:id/:extra.json", async (request, reply) => {
-  return handleCatalogRequest(request.params, reply);
-});
+app.get<{ Params: { type: "movie" | "series"; id: string } }>("/catalog/:type/:id.json", async (request, reply) => handleCatalogRequest(request.params, reply));
+app.get<{ Params: { type: "movie" | "series"; id: string; extra: string } }>("/catalog/:type/:id/:extra.json", async (request, reply) => handleCatalogRequest(request.params, reply));
 
 app.get<{ Params: { type: "movie" | "series"; id: string } }>("/meta/:type/:id.json", async (request, reply) => {
-  const params = z.object({
-    type: z.enum(["movie", "series"]),
-    id: z.string().regex(/^tt\d+/i)
-  }).safeParse(request.params);
-
-  if (!params.success) {
-    reply.code(400);
-    return { meta: null };
-  }
-
+  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().regex(/^tt\d+/i) }).safeParse(request.params);
+  if (!params.success) { reply.code(400); return { meta: null }; }
   if (!shouldBypassMetadataCache()) {
     const cached = getCachedMeta(params.data.type, params.data.id);
     if (cached) return { meta: cached };
   }
-
   const meta = await fetchTmdbMeta(params.data.type, params.data.id);
   if (!meta) return { meta: null };
   const mappedMeta = applyPersistedDocchiMappingsToMeta(meta);
@@ -116,60 +96,34 @@ app.get<{ Params: { type: "movie" | "series"; id: string } }>("/meta/:type/:id.j
   return { meta: mappedMeta };
 });
 
-app.get<{
-  Params: { type: "movie" | "series"; id: string };
-}>("/stream/:type/:id.json", async (request, reply) => {
-  const params = z.object({
-    type: z.enum(["movie", "series"]),
-    id: z.string().min(1)
-  }).safeParse(request.params);
+app.get<{ Params: { type: "movie" | "series"; id: string } }>("/subtitles/:type/:id.json", async (request, reply) => {
+  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) }).safeParse(request.params);
+  if (!params.success) { reply.code(400); return { subtitles: [] }; }
+  return toStremioSubtitleResponse(getSubtitleCache(params.data.type, params.data.id));
+});
 
-  if (!params.success) {
-    reply.code(400);
-    return { streams: [] };
-  }
-
+app.get<{ Params: { type: "movie" | "series"; id: string } }>("/stream/:type/:id.json", async (request, reply) => {
+  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) }).safeParse(request.params);
+  if (!params.success) { reply.code(400); return { streams: [] }; }
   const bestOriginal = await findBestValidatedStream(params.data.type, params.data.id);
   const requestBaseUrl = getEffectivePublicBaseUrl() ?? `${request.protocol}://${request.hostname}`;
-
-  return {
-    streams: createVisibleStreamOptions(bestOriginal, requestBaseUrl)
-  };
+  return { streams: createVisibleStreamOptions(bestOriginal, requestBaseUrl) };
 });
 
 app.get<{ Params: { streamId: string } }>("/proxy/original/:streamId", async (request, reply) => {
   const original = getSelectedOriginal(request.params.streamId);
-  if (!original?.originalUrl) {
-    reply.code(404);
-    return { error: "Selected original stream was not found or has expired." };
-  }
-
+  if (!original?.originalUrl) { reply.code(404); return { error: "Selected original stream was not found or has expired." }; }
   reply.redirect(original.originalUrl);
 });
 
 async function handleCatalogRequest(rawParams: unknown, reply: { code: (statusCode: number) => unknown }) {
-  const params = z.object({
-    type: z.enum(["movie", "series"]),
-    id: z.string().min(1),
-    extra: z.string().optional()
-  }).safeParse(rawParams);
-
-  if (!params.success) {
-    reply.code(400);
-    return { metas: [] };
-  }
-
+  const params = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1), extra: z.string().optional() }).safeParse(rawParams);
+  if (!params.success) { reply.code(400); return { metas: [] }; }
   const library = getLibraryForCatalog(params.data.type, params.data.id);
-  if (!library) {
-    return { metas: [] };
-  }
-
+  if (!library) return { metas: [] };
   const page = parseCatalogPage(params.data.extra);
   const cached = shouldBypassMetadataCache() ? undefined : getCachedLibraryItems(library.id, page);
-  if (cached) {
-    return { metas: cached };
-  }
-
+  if (cached) return { metas: cached };
   const metas = await fetchTmdbCatalog(library, page);
   if (!shouldBypassMetadataCache()) saveLibraryItems(library.id, page, metas);
   return { metas };
