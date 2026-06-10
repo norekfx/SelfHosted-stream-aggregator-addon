@@ -32,10 +32,10 @@ export type BufferPreset = typeof BUFFER_PRESETS[number];
 
 const baseManifest = {
   id: "community.selfhosted.stream.aggregator",
-  version: "0.1.0",
+  version: "0.1.1",
   name: "SelfHosted Stream Aggregator",
   description:
-    "Aggregates configured Stremio/Nuvio-compatible addons, validates streams, matches European audio/subtitle languages and exposes Original/Auto/transcoded options.",
+    "Aggregates configured Stremio/Nuvio-compatible addons, validates streams, matches European audio/subtitle languages and exposes Original/Auto/transcoded options with local WebVTT subtitle cache.",
   logo: "https://dummyimage.com/256x256/222/fff.png&text=SSA",
   types: ["movie", "series"],
   idPrefixes: ["tt"],
