@@ -32,7 +32,7 @@ export type BufferPreset = typeof BUFFER_PRESETS[number];
 
 const baseManifest = {
   id: "community.selfhosted.stream.aggregator",
-  version: "0.1.1",
+  version: "0.1.2",
   name: "SelfHosted Stream Aggregator",
   description:
     "Aggregates configured Stremio/Nuvio-compatible addons, validates streams, matches European audio/subtitle languages and exposes Original/Auto/transcoded options with local WebVTT subtitle cache.",
@@ -89,12 +89,16 @@ export function getAddonManifest() {
   const libraries = listEnabledLibraries();
   return {
     ...baseManifest,
-    resources: libraries.length ? ["stream", "catalog", "meta", "subtitles"] : ["stream", "subtitles"],
-    catalogs: libraries.map((library) => ({
-      type: library.type,
-      id: library.slug,
-      name: library.name,
-      extra: [{ name: "skip", isRequired: false }]
-    }))
+    resources: libraries.length ? ["stream", "catalog", "meta", "subtitles"] : ["stream", "catalog", "subtitles"],
+    catalogs: [
+      { type: "movie", id: "tmdb-search", name: "Szukaj TMDB — filmy", extra: [{ name: "search", isRequired: true }, { name: "skip", isRequired: false }] },
+      { type: "series", id: "tmdb-search", name: "Szukaj TMDB — seriale", extra: [{ name: "search", isRequired: true }, { name: "skip", isRequired: false }] },
+      ...libraries.map((library) => ({
+        type: library.type,
+        id: library.slug,
+        name: library.name,
+        extra: [{ name: "skip", isRequired: false }]
+      }))
+    ]
   };
 }
