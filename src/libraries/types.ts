@@ -3,6 +3,7 @@ export type LibrarySource = "tmdb";
 export type LibraryMode = "discover" | "trending" | "popular" | "top_rated" | "now_playing" | "upcoming" | "airing_today" | "on_the_air";
 export type DocchiLibraryMappingMode = "inherit" | "disabled" | "animation_series" | "series" | "all";
 export type AnimeSubLibraryMode = "manual" | "24h" | "3d" | "7d" | "14d" | "30d";
+export type AnimeSubMissingRetryMode = "never" | "once" | "twice" | "daily";
 export type LibraryAutomationInterval = 24 | 72 | 168 | 336 | 720;
 
 export type LibraryConfig = {
@@ -27,6 +28,7 @@ export type LibraryConfig = {
   docchiAutomationIntervalHours?: LibraryAutomationInterval;
   animeSubAutomationMode?: AnimeSubLibraryMode;
   animeSubAutomationIntervalHours?: LibraryAutomationInterval;
+  animeSubMissingRetryMode?: AnimeSubMissingRetryMode;
   includeAdult?: boolean;
   timeWindow?: "day" | "week";
 };
@@ -45,46 +47,7 @@ export type Library = {
   updatedAt: string;
 };
 
-export type LibraryInput = {
-  name: string;
-  slug?: string;
-  type: LibraryMediaType;
-  source?: LibrarySource;
-  mode: LibraryMode;
-  enabled?: boolean;
-  sortOrder?: number;
-  config?: LibraryConfig;
-};
-
-export type StremioVideo = {
-  id: string;
-  title: string;
-  released?: string;
-  season?: number;
-  episode?: number;
-  overview?: string;
-  thumbnail?: string;
-};
-
-export type StremioCatalogMeta = {
-  id: string;
-  type: LibraryMediaType;
-  name: string;
-  tmdbId?: number;
-  poster?: string;
-  background?: string;
-  description?: string;
-  releaseInfo?: string;
-  released?: string;
-  imdbRating?: string;
-  genres?: string[];
-  runtime?: string;
-  trailers?: Array<{ source: string; type: "Trailer" }>;
-  videos?: StremioVideo[];
-};
-
-export type TmdbWatchProvider = {
-  id: number;
-  name: string;
-  logo?: string;
-};
+export type LibraryInput = { name: string; slug?: string; type: LibraryMediaType; source?: LibrarySource; mode: LibraryMode; enabled?: boolean; sortOrder?: number; config?: LibraryConfig };
+export type StremioVideo = { id: string; title: string; released?: string; season?: number; episode?: number; overview?: string; thumbnail?: string };
+export type StremioCatalogMeta = { id: string; type: LibraryMediaType; name: string; tmdbId?: number; poster?: string; background?: string; description?: string; releaseInfo?: string; released?: string; imdbRating?: string; genres?: string[]; runtime?: string; trailers?: Array<{ source: string; type: "Trailer" }>; videos?: StremioVideo[] };
+export type TmdbWatchProvider = { id: number; name: string; logo?: string };
