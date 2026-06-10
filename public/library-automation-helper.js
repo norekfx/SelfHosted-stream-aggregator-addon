@@ -2,6 +2,7 @@
   const DOCCHI_FIELD_ID = 'libraryDocchiAutomationMode';
   const DOCCHI_INTERVAL_ID = 'libraryDocchiAutomationIntervalHours';
   const ANIMESUB_FIELD_ID = 'libraryAnimeSubAutomationMode';
+  const ANIMESUB_RETRY_ID = 'libraryAnimeSubMissingRetryMode';
   function installAutomationFields() {
     const grid = document.querySelector('#libraryForm .panel-grid.two');
     if (!grid) return;
@@ -19,9 +20,13 @@
     const animeSubMode = document.createElement('label');
     animeSubMode.dataset.libraryAutomationField = 'animesub';
     animeSubMode.innerHTML = `Pobieranie napisów AnimeSub<select id="${ANIMESUB_FIELD_ID}"><option value="24h">Co 24 godziny</option><option value="3d">Co 3 dni</option><option value="7d" selected>Co 7 dni</option><option value="14d">Co 14 dni</option><option value="30d">Co 30 dni</option><option value="manual">Tylko wymuszenie</option></select>`;
+    const animeSubRetry = document.createElement('label');
+    animeSubRetry.dataset.animesubRetryWrap = 'true';
+    animeSubRetry.dataset.libraryAutomationField = 'animesub-retry';
+    animeSubRetry.innerHTML = `Ponowne szukanie brakujących napisów<select id="${ANIMESUB_RETRY_ID}"><option value="once" selected>Raz — godzinę po normalnym szukaniu</option><option value="twice">2 razy — drugi raz godzinę po ponowieniu</option><option value="daily">Co 24 godziny dla brakujących</option><option value="never">Nigdy</option></select><small class="hint">Dotyczy pozycji, dla których nie udało się uzyskać działającego lokalnego WebVTT.</small>`;
     const enabled = document.querySelector('#libraryEnabled')?.closest('label');
-    if (enabled?.parentNode === grid) grid.insertBefore(docchiMode, enabled), grid.insertBefore(docchiInterval, enabled), grid.insertBefore(animeSubMode, enabled);
-    else grid.append(docchiMode, docchiInterval, animeSubMode);
+    if (enabled?.parentNode === grid) grid.insertBefore(docchiMode, enabled), grid.insertBefore(docchiInterval, enabled), grid.insertBefore(animeSubMode, enabled), grid.insertBefore(animeSubRetry, enabled);
+    else grid.append(docchiMode, docchiInterval, animeSubMode, animeSubRetry);
     const docchiSelect = document.querySelector(`#${DOCCHI_FIELD_ID}`);
     if (docchiSelect) docchiSelect.value = legacyValue;
     docchiSelect?.addEventListener('change', () => { if (legacy) legacy.value = docchiSelect.value; syncIntervalVisibility(); });
@@ -30,7 +35,7 @@
   }
   function hideLegacyDocchiField() { const legacy = document.querySelector('#libraryDocchiPublicMappingMode'); const label = legacy?.closest('label'); if (label) label.style.display = 'none'; }
   function intervalOptions() { return `<option value="24">24 h</option><option value="72">3 dni</option><option value="168" selected>7 dni</option><option value="336">14 dni</option><option value="720">30 dni</option>`; }
-  function syncIntervalVisibility() { const docchi = document.querySelector(`#${DOCCHI_FIELD_ID}`)?.value || 'inherit'; const docchiWrap = document.querySelector('[data-docchi-interval-wrap]'); if (docchiWrap) docchiWrap.style.display = docchi === 'disabled' ? 'none' : ''; }
+  function syncIntervalVisibility() { const docchi = document.querySelector(`#${DOCCHI_FIELD_ID}`)?.value || 'inherit'; const animeSub = document.querySelector(`#${ANIMESUB_FIELD_ID}`)?.value || '7d'; const docchiWrap = document.querySelector('[data-docchi-interval-wrap]'); const retryWrap = document.querySelector('[data-animesub-retry-wrap]'); if (docchiWrap) docchiWrap.style.display = docchi === 'disabled' ? 'none' : ''; if (retryWrap) retryWrap.style.display = animeSub === 'manual' ? 'none' : ''; }
   function modeToIntervalHours(mode) { if (mode === '24h') return 24; if (mode === '3d') return 72; if (mode === '14d') return 336; if (mode === '30d') return 720; return 168; }
   function patchLibraryFetch() {
     if (window.__libraryAutomationFetchPatched) return;
@@ -41,12 +46,12 @@
         const path = typeof input === 'string' ? input : input?.url || '';
         const method = String(init?.method || 'GET').toUpperCase();
         if (path === '/admin/libraries' && method === 'POST' && init.body) { const body = JSON.parse(init.body); body.config = { ...(body.config || {}), ...readAutomationConfig() }; init = { ...init, body: JSON.stringify(body) }; }
-        if (/^\/admin\/libraries\/[^/]+$/.test(path) && method === 'PATCH' && init.body) { const body = JSON.parse(init.body); if (body.config?.docchiPublicMappingMode && !body.config.docchiAutomationMode) body.config.docchiAutomationMode = body.config.docchiPublicMappingMode; if (body.config?.animeSubAutomationMode && !body.config.animeSubAutomationIntervalHours && body.config.animeSubAutomationMode !== 'manual') body.config.animeSubAutomationIntervalHours = modeToIntervalHours(body.config.animeSubAutomationMode); init = { ...init, body: JSON.stringify(body) }; }
+        if (/^\/admin\/libraries\/[^/]+$/.test(path) && method === 'PATCH' && init.body) { const body = JSON.parse(init.body); if (body.config?.docchiPublicMappingMode && !body.config.docchiAutomationMode) body.config.docchiAutomationMode = body.config.docchiPublicMappingMode; if (body.config?.animeSubAutomationMode && !body.config.animeSubAutomationIntervalHours && body.config.animeSubAutomationMode !== 'manual') body.config.animeSubAutomationIntervalHours = modeToIntervalHours(body.config.animeSubAutomationMode); if (body.config?.animeSubAutomationMode && body.config.animeSubAutomationMode !== 'manual' && !body.config.animeSubMissingRetryMode) body.config.animeSubMissingRetryMode = document.querySelector(`#${ANIMESUB_RETRY_ID}`)?.value || 'once'; init = { ...init, body: JSON.stringify(body) }; }
       } catch {}
       return originalFetch(input, init);
     };
   }
-  function readAutomationConfig() { const docchiMode = document.querySelector(`#${DOCCHI_FIELD_ID}`)?.value || document.querySelector('#libraryDocchiPublicMappingMode')?.value || 'inherit'; const animeSubMode = document.querySelector(`#${ANIMESUB_FIELD_ID}`)?.value || '7d'; const config = { docchiPublicMappingMode: docchiMode, docchiAutomationMode: docchiMode, animeSubAutomationMode: animeSubMode }; if (docchiMode !== 'disabled') config.docchiAutomationIntervalHours = Number(document.querySelector(`#${DOCCHI_INTERVAL_ID}`)?.value || 168); if (animeSubMode !== 'manual') config.animeSubAutomationIntervalHours = modeToIntervalHours(animeSubMode); return config; }
+  function readAutomationConfig() { const docchiMode = document.querySelector(`#${DOCCHI_FIELD_ID}`)?.value || document.querySelector('#libraryDocchiPublicMappingMode')?.value || 'inherit'; const animeSubMode = document.querySelector(`#${ANIMESUB_FIELD_ID}`)?.value || '7d'; const retryMode = document.querySelector(`#${ANIMESUB_RETRY_ID}`)?.value || 'once'; const config = { docchiPublicMappingMode: docchiMode, docchiAutomationMode: docchiMode, animeSubAutomationMode: animeSubMode, animeSubMissingRetryMode: retryMode }; if (docchiMode !== 'disabled') config.docchiAutomationIntervalHours = Number(document.querySelector(`#${DOCCHI_INTERVAL_ID}`)?.value || 168); if (animeSubMode !== 'manual') config.animeSubAutomationIntervalHours = modeToIntervalHours(animeSubMode); return config; }
   function installDashboardProgressBox() {
     const dashboard = document.querySelector('#dashboard');
     if (!dashboard || document.querySelector('#libraryAutomationProgressPanel')) return;
