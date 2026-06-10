@@ -22,12 +22,7 @@
       const closeButton = detail.querySelector('[data-close-library-detail]');
       if (!closeButton) return;
       const button = document.createElement('button');
-      button.className = 'small-btn';
-      button.type = 'button';
-      button.dataset.forceAnimesubMovie = 'true';
-      button.textContent = 'Wymuś napisy';
-      button.style.float = 'right';
-      button.style.marginRight = '0.5rem';
+      button.className = 'small-btn'; button.type = 'button'; button.dataset.forceAnimesubMovie = 'true'; button.textContent = 'Wymuś napisy'; button.style.float = 'right'; button.style.marginRight = '0.5rem';
       button.addEventListener('click', () => forceAnimeSub(button, 'movie', mediaId));
       closeButton.before(button);
     }
@@ -41,10 +36,7 @@
       card.setAttribute('data-animesub-episode-id', episodeId);
       if (!card.querySelector('[data-force-animesub-episode]')) {
         const button = document.createElement('button');
-        button.className = 'small-btn animesub-episode-btn';
-        button.type = 'button';
-        button.dataset.forceAnimesubEpisode = episodeId;
-        button.textContent = 'Wymuś napisy';
+        button.className = 'small-btn animesub-episode-btn'; button.type = 'button'; button.dataset.forceAnimesubEpisode = episodeId; button.textContent = 'Wymuś napisy';
         button.addEventListener('click', (event) => { event.stopPropagation(); forceAnimeSub(button, 'series', episodeId, card); });
         const target = card.querySelector('div') ?? card;
         target.appendChild(button);
@@ -57,19 +49,15 @@
     seriesSummaryStatus.set(seriesId, 'loading');
     const ids = Array.from(new Set(episodeCards.map((card) => card.getAttribute('data-animesub-episode-id')).filter(Boolean)));
     showSeriesSummary(detail, 0, ids.length, 0, 'sprawdzam cache...');
-    let doneEpisodes = 0;
-    let checked = 0;
-    let totalSubtitles = 0;
+    let doneEpisodes = 0, checked = 0, totalSubtitles = 0, cursor = 0;
     const cardById = new Map(episodeCards.map((card) => [card.getAttribute('data-animesub-episode-id'), card]));
-    let cursor = 0;
     async function worker() {
       while (cursor < ids.length) {
         const id = ids[cursor++];
         await yieldToBrowser();
         const count = await getSubtitleCount('series', id);
         if (count > 0) doneEpisodes += 1;
-        totalSubtitles += count;
-        checked += 1;
+        totalSubtitles += count; checked += 1;
         showAnimeSubBadge(cardById.get(id), count, false, true);
         if (checked % 5 === 0 || checked === ids.length) showSeriesSummary(detail, doneEpisodes, ids.length, totalSubtitles, `sprawdzone ${checked}/${ids.length}`);
       }
@@ -118,9 +106,9 @@
     button.disabled = true;
     button.textContent = 'Pobieram napisy...';
     try {
-      const response = await fetch(`/admin/animesub/${encodeURIComponent(type)}/${encodeURIComponent(id)}/fetch`, { method: 'POST' });
+      const response = await fetch(`/admin/animesub/${encodeURIComponent(type)}/${encodeURIComponent(id)}/fetch`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: '{}' });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
       const cache = data.cache;
       const count = cache?.subtitles?.length ?? 0;
       cacheStatus.set(`${type}:${id}`, { state: 'done', count });
@@ -138,12 +126,7 @@
     if (!target) return;
     target.querySelector('[data-animesub-badge]')?.remove();
     const badge = document.createElement('small');
-    badge.dataset.animesubBadge = 'true';
-    badge.style.display = 'inline-block';
-    badge.style.marginLeft = '0.5rem';
-    badge.style.marginTop = '0.35rem';
-    badge.style.fontWeight = '700';
-    badge.style.color = error ? '#f87171' : (count > 0 ? '#22c55e' : '#f59e0b');
+    badge.dataset.animesubBadge = 'true'; badge.style.display = 'inline-block'; badge.style.marginLeft = '0.5rem'; badge.style.marginTop = '0.35rem'; badge.style.fontWeight = '700'; badge.style.color = error ? '#f87171' : (count > 0 ? '#22c55e' : '#f59e0b');
     badge.textContent = error ? 'AnimeSub: błąd' : (count > 0 ? `AnimeSub: ${count} napisów` : 'AnimeSub: brak napisów');
     if (!card && target.classList.contains('library-detail-grid')) { let box = target.querySelector('[data-animesub-movie-summary]'); if (!box) { box = document.createElement('div'); box.className = 'library-detail-box'; box.dataset.animesubMovieSummary = 'true'; target.appendChild(box); } box.innerHTML = `<span>Napisy AnimeSub</span><strong>${count > 0 ? `${count} plików` : 'brak w cache'}</strong>`; return; }
     target.appendChild(badge);
