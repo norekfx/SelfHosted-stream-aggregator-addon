@@ -3,9 +3,9 @@ import { z } from "zod";
 import { deleteAddon, getAddon, listAddons, registerAddon } from "../addons/addon-registry.js";
 import { resetAllDocchiEpisodeMappings } from "../docchi/docchi-episode-mapping-store.js";
 import { getKometaAnimeIdsStatus, syncKometaAnimeIds } from "../docchi/kometa-anime-ids.js";
+import { startManualAnimeSubMissingRetry } from "../libraries/library-automation.js";
 import { clearLibraryCache } from "../libraries/library-cache.js";
 import { createLibrary, deleteLibrary, getLibrary, listLibraries, updateLibrary } from "../libraries/library-registry.js";
-import type { LibraryAutomationInterval } from "../libraries/types.js";
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
 import { DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS, DOCCHI_PUBLIC_MAPPING_MODES, DOCCHI_STREAM_FORCE_MODES, getAppSettings, LINK_VALIDATION_MODES, METADATA_SYNC_INTERVALS, TRANSCODE_PRESETS, TRANSCODE_QUALITY_ORDER, updateAppSettings } from "../settings/app-settings.js";
 import { clearSearchCache, clearSearchHistory, getSearchHistoryDetails, listCachedSearchResults, listSearchHistory } from "../search/search-cache.js";
@@ -13,12 +13,12 @@ import { refreshNow } from "../search/cached-selection.js";
 import { aggregateStreams } from "../streams/aggregation.js";
 import type { StreamType } from "../streams/types.js";
 import { fetchAnimeSubSubtitles, isAnimeSubAddon } from "../subtitles/animesub-client.js";
-import { clearSubtitleCache, countUsableSubtitles, getSubtitleCache, listSubtitleCache, saveSubtitleCache } from "../subtitles/subtitle-cache.js";
+import { clearSubtitleCache, getSubtitleCache, listSubtitleCache, saveSubtitleCache } from "../subtitles/subtitle-cache.js";
 import { localizeSubtitleResults } from "../subtitles/subtitle-local-cache.js";
 import { registerSubtitlePreviewRoutes } from "../subtitles/subtitle-preview-routes.js";
 import { clearSystemLogs, listSystemLogs, type SystemLogLevel, writeSystemLog } from "../system/system-log.js";
 import { runTechnicalHealthCheck } from "../system/technical-health.js";
-import { fetchTmdbCatalog, fetchTmdbMeta, fetchTmdbWatchProviders } from "../tmdb/tmdb-client.js";
+import { fetchTmdbCatalog, fetchTmdbWatchProviders } from "../tmdb/tmdb-client.js";
 
 const registerAddonSchema = z.object({ manifestUrl: z.string().url(), enabled: z.boolean().optional() });
 const aggregateParamsSchema = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) });
@@ -49,7 +49,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/admin/libraries/:id", async (request, reply) => { const body = librarySchema.partial().safeParse(request.body); if (!body.success) { reply.code(400); return { error: "Invalid library update payload.", details: body.error.flatten() }; } const id = (request.params as { id: string }).id; const library = updateLibrary(id, body.data); if (!library) { reply.code(404); return { error: "Library not found." }; } clearLibraryCache(library.id); writeSystemLog("info", "libraries", "Library updated.", { id: library.id, name: library.name }); return { library }; });
   app.post("/admin/libraries/:id/test", async (request, reply) => { const id = (request.params as { id: string }).id; const library = getLibrary(id); if (!library) { reply.code(404); return { error: "Library not found." }; } const metas = await fetchTmdbCatalog(library, 1); return { library, metas: metas.slice(0, 10) }; });
   app.post("/admin/libraries/:id/refresh", async (request, reply) => { const id = (request.params as { id: string }).id; const library = getLibrary(id); if (!library) { reply.code(404); return { error: "Library not found." }; } const deleted = clearLibraryCache(library.id); return { ok: true, deleted }; });
-  app.post("/admin/libraries/:id/animesub/retry-missing", async (request, reply) => { const id = (request.params as { id: string }).id; const library = getLibrary(id); if (!library) { reply.code(404); return { error: "Library not found." }; } return retryMissingAnimeSubForLibrary(library); });
+  app.post("/admin/libraries/:id/animesub/retry-missing", async (request, reply) => { const id = (request.params as { id: string }).id; const library = getLibrary(id); if (!library) { reply.code(404); return { error: "Library not found." }; } const started = startManualAnimeSubMissingRetry(library); if (!started.started) reply.code(409); return started; });
   app.delete("/admin/libraries/:id", async (request, reply) => { const id = (request.params as { id: string }).id; const deleted = deleteLibrary(id); if (!deleted) { reply.code(404); return { error: "Library not found." }; } writeSystemLog("info", "libraries", "Library deleted.", { id }); return { ok: true }; });
   app.get("/admin/system/health", async () => { const report = await runTechnicalHealthCheck(); writeSystemLog(report.status === "error" ? "error" : report.status === "warn" ? "warn" : "info", "health", "Technical health-check completed.", { status: report.status }); return { report }; });
   app.get<{ Querystring: { limit?: string; level?: SystemLogLevel } }>("/admin/system/logs", async (request, reply) => { const query = logsQuerySchema.safeParse(request.query); if (!query.success) { reply.code(400); return { error: "Invalid logs query.", details: query.error.flatten() }; } return { logs: listSystemLogs(query.data.limit, query.data.level) }; });
@@ -65,7 +65,6 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get("/admin/history/:id", async (request, reply) => { const details = getSearchHistoryDetails((request.params as { id: string }).id); if (!details) { reply.code(404); return { error: "History entry not found." }; } return { details }; });
 }
 
-async function retryMissingAnimeSubForLibrary(library: NonNullable<ReturnType<typeof getLibrary>>): Promise<Record<string, unknown>> { const items = await fetchTmdbCatalog(library, 1); const targets: Array<{ type: StreamType; id: string }> = []; for (const item of items) { if (library.type === "movie") targets.push({ type: "movie", id: item.id }); else { const meta = await fetchTmdbMeta("series", item.id).catch(() => null); for (const video of meta?.videos ?? []) if (video.id) targets.push({ type: "series", id: video.id }); } } let checked = 0, retried = 0, usable = 0; for (const target of targets) { checked += 1; const current = getSubtitleCache(target.type, target.id); if (countUsableSubtitles(current) > 0) { usable += 1; continue; } retried += 1; const saved = await fetchAndSaveAnimeSub(target.type, target.id); if (countUsableSubtitles(saved) > 0) usable += 1; } writeSystemLog("info", "animesub", "Manual AnimeSub missing retry for library completed.", { libraryId: library.id, checked, retried, usable }); return { ok: true, libraryId: library.id, checked, retried, usable }; }
 async function fetchAndSaveAnimeSub(type: StreamType, id: string) { const results = await fetchAnimeSubSubtitles(type, id); const localizedResults = await localizeSubtitleResults(type, id, results); return saveSubtitleCache(type, id, localizedResults); }
 function isDocchiAddon(addon: { name?: string; manifestUrl: string; description?: string }): boolean { const text = `${addon.name ?? ""} ${addon.description ?? ""} ${addon.manifestUrl ?? ""}`; return /docchi/i.test(text); }
 function toAdminAddon(addon: NonNullable<ReturnType<typeof getAddon>>): Record<string, unknown> { return { id: addon.id, manifestUrl: addon.manifestUrl, name: addon.name, version: addon.version, description: addon.description, enabled: addon.enabled, supportedResources: addon.supportedResources, supportedTypes: addon.supportedTypes, status: addon.status, lastCheckedAt: addon.lastCheckedAt, lastError: addon.lastError, responseTimeMs: addon.responseTimeMs }; }
