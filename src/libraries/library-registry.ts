@@ -4,6 +4,7 @@ import type { Library, LibraryConfig, LibraryInput, LibraryMediaType, LibraryMod
 
 const DOCCHI_AUTOMATION_MODES = new Set(["inherit", "disabled", "animation_series", "series", "all"]);
 const ANIMESUB_AUTOMATION_MODES = new Set(["manual", "24h", "3d", "7d", "14d", "30d"]);
+const ANIMESUB_MISSING_RETRY_MODES = new Set(["never", "once", "twice", "daily"]);
 const AUTOMATION_INTERVALS = new Set([24, 72, 168, 336, 720]);
 
 type LibraryRow = { id: string; name: string; slug: string; type: LibraryMediaType; source: "tmdb"; mode: LibraryMode; enabled: 0 | 1; sort_order: number; config_json: string; created_at: string; updated_at: string };
@@ -42,6 +43,7 @@ function sanitizeConfig(config: LibraryConfig): LibraryConfig {
     if (value === undefined || value === null || value === "") continue;
     if (key === "docchiAutomationMode") { if (typeof value === "string" && DOCCHI_AUTOMATION_MODES.has(value)) sanitized.docchiAutomationMode = value as never; continue; }
     if (key === "animeSubAutomationMode") { if (typeof value === "string" && ANIMESUB_AUTOMATION_MODES.has(value)) sanitized.animeSubAutomationMode = value as never; continue; }
+    if (key === "animeSubMissingRetryMode") { if (typeof value === "string" && ANIMESUB_MISSING_RETRY_MODES.has(value)) sanitized.animeSubMissingRetryMode = value as never; continue; }
     if (key === "docchiAutomationIntervalHours" || key === "animeSubAutomationIntervalHours") { const number = Number(value); if (AUTOMATION_INTERVALS.has(number)) sanitized[key] = number as never; continue; }
     if (typeof value === "string") sanitized[key] = value.trim() as never;
     else if (typeof value === "number" && Number.isFinite(value)) sanitized[key] = value as never;
@@ -49,6 +51,7 @@ function sanitizeConfig(config: LibraryConfig): LibraryConfig {
   }
   if (sanitized.docchiAutomationMode && sanitized.docchiAutomationMode !== "disabled" && !sanitized.docchiAutomationIntervalHours) sanitized.docchiAutomationIntervalHours = 168;
   if (sanitized.animeSubAutomationMode && sanitized.animeSubAutomationMode !== "manual" && !sanitized.animeSubAutomationIntervalHours) sanitized.animeSubAutomationIntervalHours = 168;
+  if (sanitized.animeSubAutomationMode && sanitized.animeSubAutomationMode !== "manual" && !sanitized.animeSubMissingRetryMode) sanitized.animeSubMissingRetryMode = "once";
   return sanitized;
 }
 
