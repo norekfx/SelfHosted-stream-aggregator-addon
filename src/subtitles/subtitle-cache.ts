@@ -15,11 +15,23 @@ export function getLocalSubtitle(type: StreamType, mediaId: string, index: numbe
 
 export function toStremioSubtitleResponse(entry: SubtitleCacheEntry | undefined, publicBaseUrl?: string): { subtitles: ExternalSubtitle[] } {
   const baseUrl = (publicBaseUrl ?? getEffectivePublicBaseUrl() ?? "").replace(/\/$/, "");
-  const subtitles = entry?.subtitles.map(({ addonId, addonName, requestUrl, fetchedAt, ...subtitle }, index) => {
+  const subtitles = entry?.subtitles.filter(isUsableSubtitle).map(({ addonId, addonName, requestUrl, fetchedAt, ...subtitle }, index) => {
     const publicSubtitle = toPublicSubtitle(subtitle, baseUrl);
     return normalizeForStremio(publicSubtitle, index, addonName);
   }) ?? [];
   return { subtitles };
+}
+
+export function isUsableSubtitle(subtitle: LocalCachedSubtitle | undefined): boolean {
+  return Boolean(subtitle?.localPath && subtitle.localContent && subtitle.localFormat === "vtt" && !subtitle.localError);
+}
+
+export function countUsableSubtitles(entry: SubtitleCacheEntry | undefined): number {
+  return entry?.subtitles.filter(isUsableSubtitle).length ?? 0;
+}
+
+export function hasUsableSubtitles(entry: SubtitleCacheEntry | undefined): boolean {
+  return countUsableSubtitles(entry) > 0;
 }
 
 function normalizeForStremio(subtitle: ExternalSubtitle, index: number, addonName?: string): ExternalSubtitle {
@@ -29,20 +41,8 @@ function normalizeForStremio(subtitle: ExternalSubtitle, index: number, addonNam
   return { ...subtitle, id, lang, name: nameBase.includes("SelfHosted") ? nameBase : `${nameBase} · SelfHosted Stream Aggregator` };
 }
 
-function normalizeSubtitleLang(value: string | undefined): string {
-  const normalized = (value || "pl").trim().toLowerCase();
-  if (["pl", "pol", "polish", "polski", "pl-pl"].includes(normalized)) return "pol";
-  if (["en", "eng", "english", "en-us", "en-gb"].includes(normalized)) return "eng";
-  if (["jp", "ja", "jpn", "japanese"].includes(normalized)) return "jpn";
-  if (normalized.length === 2) return normalized;
-  return normalized.slice(0, 12) || "pol";
-}
-
-function sanitizeSubtitleId(value: string | undefined, index: number): string {
-  const id = (value || `selfhosted-pol-${index + 1}`).trim().replace(/[^a-z0-9._:-]+/gi, "-").replace(/^-+|-+$/g, "");
-  return id || `selfhosted-pol-${index + 1}`;
-}
-
+function normalizeSubtitleLang(value: string | undefined): string { const normalized = (value || "pl").trim().toLowerCase(); if (["pl", "pol", "polish", "polski", "pl-pl"].includes(normalized)) return "pol"; if (["en", "eng", "english", "en-us", "en-gb"].includes(normalized)) return "eng"; if (["jp", "ja", "jpn", "japanese"].includes(normalized)) return "jpn"; if (normalized.length === 2) return normalized; return normalized.slice(0, 12) || "pol"; }
+function sanitizeSubtitleId(value: string | undefined, index: number): string { const id = (value || `selfhosted-pol-${index + 1}`).trim().replace(/[^a-z0-9._:-]+/gi, "-").replace(/^-+|-+$/g, ""); return id || `selfhosted-pol-${index + 1}`; }
 function rowToEntry(row: SubtitleCacheRow): SubtitleCacheEntry { return { type: row.type as StreamType, mediaId: row.media_id, fetchedAt: row.fetched_at, updatedAt: row.updated_at, addonResults: parseJson(row.addon_results_json, []), subtitles: parseJson(row.subtitles_json, []) }; }
 function parseJson<T>(value: string | null | undefined, fallback: T): T { if (!value) return fallback; try { return JSON.parse(value) as T; } catch { return fallback; } }
 function cacheKey(type: StreamType, mediaId: string): string { return `${type}:${mediaId}`; }
