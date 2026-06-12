@@ -10,7 +10,6 @@ export function createVisibleStreamOptions(bestOriginal: AggregatedStream | null
   const encodedOriginalId = encodeURIComponent(bestOriginal.id);
   const transcodeMode = getEffectiveTranscodeMode();
   const transcodePath = transcodeMode === "vod" ? "transcode-vod" : "transcode";
-  const modeLabel = transcodeMode === "vod" ? "VOD HLS" : "Live HLS";
 
   const original: StremioStream = {
     name: "Original",
@@ -23,8 +22,8 @@ export function createVisibleStreamOptions(bestOriginal: AggregatedStream | null
   };
 
   const transcoded = TRANSCODE_QUALITIES.map((quality: TranscodeQuality): StremioStream => ({
-    name: quality === "auto" ? `Auto ${modeLabel}` : `${quality.toUpperCase()} ${modeLabel}`,
-    title: `${modeLabel} ${quality === "auto" ? "Auto" : quality.toUpperCase()} from ${bestOriginal.quality ?? "original"}`,
+    name: quality === "auto" ? "Auto" : quality.toUpperCase(),
+    title: `${quality === "auto" ? "Auto" : quality.toUpperCase()} from ${bestOriginal.quality ?? "original"}`,
     url: `${requestBaseUrl}/${transcodePath}/${encodedOriginalId}/${quality}/master.m3u8`,
     behaviorHints: {
       notWebReady: false,
