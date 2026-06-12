@@ -187,7 +187,7 @@ function playSelectedTranscodeDiagnostic(event) {
     setTranscodeDetails({ error: "missing_transcode_url", mode, playbackMode, candidates: window.transcodeDiagnostics?.candidates ?? [], streams: window.transcodeDiagnostics?.streams ?? [] });
     return;
   }
-  playTranscodeDiagnosticUrl(url, mode, playbackMode);
+  void playTranscodeDiagnosticUrl(url, mode, playbackMode);
 }
 
 async function copySelectedTranscodeDiagnosticUrl(event) {
@@ -206,7 +206,7 @@ async function copySelectedTranscodeDiagnosticUrl(event) {
   }
 }
 
-function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
+async function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
   const video = document.getElementById("transcodeVideo");
   if (!video) return;
 
@@ -224,18 +224,45 @@ function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
   window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), currentPlaybackMode: playbackMode, currentMode: mode, currentUrl: url };
   refreshDiagnosticTranscodeStatus();
 
+  if (isHls) {
+    const ready = await preflightHlsPlaylist(url, mode, playbackMode);
+    if (!ready) return;
+  }
+
   if (isHls && window.Hls && Hls.isSupported()) {
     const hls = new Hls({ debug: false, lowLatencyMode: playbackMode === "live" });
     window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), hls };
     hls.on(Hls.Events.ERROR, (_, data) => {
       setTranscodeStatus(`HLS error: ${escapeDiagnosticHtml(data.type)} / ${escapeDiagnosticHtml(data.details)} / fatal=${escapeDiagnosticHtml(data.fatal)}`, true, true);
     });
-    hls.loadSource(url);
+    hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch((error) => setTranscodeStatus(`Nie udało się wystartować video.play(): ${escapeDiagnosticHtml(error?.message ?? error)}`, true, true)));
     hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
   } else {
     video.src = url;
-    video.play().catch(() => {});
+    video.addEventListener("error", () => setTranscodeStatus(`Błąd elementu video przy URL: <code>${escapeDiagnosticHtml(url)}</code>`, true, true), { once: true });
+    video.play().catch((error) => setTranscodeStatus(`Nie udało się wystartować video.play(): ${escapeDiagnosticHtml(error?.message ?? error)}`, true, true));
+  }
+}
+
+async function preflightHlsPlaylist(url, mode, playbackMode) {
+  try {
+    const response = await fetch(url, { cache: "no-store" });
+    const text = await response.text().catch(() => "");
+    setTranscodeDetails({ mode, playbackMode, url, playlistStatus: response.status, playlistPreview: text.slice(0, 800), candidates: window.transcodeDiagnostics?.candidates ?? [] });
+    if (!response.ok) {
+      setTranscodeStatus(`Playlist HLS nie jest gotowa: HTTP ${response.status}<br><code>${escapeDiagnosticHtml(url)}</code><pre>${escapeDiagnosticHtml(text.slice(0, 800))}</pre>`, true);
+      return false;
+    }
+    if (!/^#EXTM3U/m.test(text)) {
+      setTranscodeStatus(`Endpoint nie zwrócił playlisty HLS.<br><code>${escapeDiagnosticHtml(url)}</code><pre>${escapeDiagnosticHtml(text.slice(0, 800))}</pre>`, true);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    setTranscodeStatus(`Nie udało się pobrać playlisty HLS: ${escapeDiagnosticHtml(error?.message ?? error)}<br><code>${escapeDiagnosticHtml(url)}</code>`, true);
+    setTranscodeDetails({ mode, playbackMode, url, error: String(error), candidates: window.transcodeDiagnostics?.candidates ?? [] });
+    return false;
   }
 }
 
