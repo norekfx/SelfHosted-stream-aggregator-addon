@@ -10,7 +10,7 @@ import type { BufferPreset, TranscodeQuality } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream } from "../streams/types.js";
 import { writeSystemLog } from "../system/system-log.js";
-import { getTranscodeProfile, isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
+import { getTranscodeProfile, isBufferPreset, isTranscodeQuality, type TranscodeProfile } from "./transcode-profiles.js";
 import { stopActiveTranscodeSessions, type TranscodeSpeedStats } from "./transcode-session.js";
 
 const vodParamsSchema = z.object({ streamId: z.string().min(1), quality: z.string() });
@@ -18,7 +18,7 @@ const vodSegmentParamsSchema = vodParamsSchema.extend({ segment: z.string().rege
 
 type VodProgress = { frame?: number; fps?: number; bitrate?: string; outTime?: string; speed?: string; progress?: string };
 type VodStatus = "starting" | "running" | "exited" | "failed";
-type VodBatchSnapshot = { firstSegmentIndex: number; lastSegmentIndex: number; segmentCount: number; firstSegmentName: string; lastSegmentName: string; startSeconds: number; durationSeconds: number; startedAt: string; finishedAt?: string; speed?: string; fps?: number };
+type VodBatchSnapshot = { firstSegmentIndex: number; lastSegmentIndex: number; segmentCount: number; firstSegmentName: string; lastSegmentName: string; startSeconds: number; durationSeconds: number; startedAt: string; finishedAt?: string; speed?: string; fps?: number; preset?: string; crf?: number; videoBitrateKbps?: number; audioMode?: string };
 type VodSession = { id: string; streamId: string; title?: string; sourceAddon?: string; sourceQuality?: string; quality: TranscodeQuality; bufferPreset: BufferPreset; originalUrl: string; durationSeconds: number; segmentSeconds: number; targetBufferSeconds: number; outputDir: string; playlistPath: string; createdAt: string; updatedAt: string; status: VodStatus; error?: string; lastLog?: string; activeSegment?: string; activeBatch?: VodBatchSnapshot; lastBatch?: VodBatchSnapshot; progress?: VodProgress; speedStats?: TranscodeSpeedStats; activeProcess?: ChildProcessWithoutNullStreams };
 
 const vodSessions = new Map<string, VodSession>();
@@ -27,7 +27,7 @@ const sessionQueues = new Map<string, Promise<void>>();
 
 export function listVodTranscodeSessions(): Array<any> {
   return Array.from(vodSessions.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50).map((session) => {
-    const profile = getTranscodeProfile(session.quality, session.bufferPreset);
+    const profile = getVodRuntimeProfile(session);
     const settings = getEffectiveTranscodeSettings();
     const generatedSegments = getGeneratedSegmentIndexes(session);
     const segmentCount = generatedSegments.length;
@@ -52,6 +52,9 @@ export function listVodTranscodeSessions(): Array<any> {
         progression: settings.vodBufferProgression,
         adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled,
         fixedBatchSegmentCount: settings.vodFixedBatchSegmentCount,
+        qualityMode: settings.vodQualityMode,
+        bitrateMode: settings.vodBitrateMode,
+        audioMode: settings.vodAudioMode,
         batchSegmentCount: getVodBatchSegmentCount(session),
         prewarmSegmentCount: getVodPrewarmSegmentCount(session),
         generatedRanges: getGeneratedSegmentRanges(generatedSegments).slice(0, 12),
@@ -116,7 +119,7 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
 async function getOrCreateVodSession(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset, original: AggregatedStream): Promise<VodSession> {
   const profile = getTranscodeProfile(quality, bufferPreset);
   const settings = getEffectiveTranscodeSettings();
-  const sessionId = Buffer.from(`${streamId}|${quality}|${bufferPreset}|vod|${settings.vodSegmentSeconds}|${settings.vodStartupBufferSeconds}|${settings.vodBufferProgression}|${settings.vodAdaptiveBatchEnabled}|${settings.vodFixedBatchSegmentCount}`).toString("base64url");
+  const sessionId = Buffer.from(`${streamId}|${quality}|${bufferPreset}|vod|${settings.vodSegmentSeconds}|${settings.vodStartupBufferSeconds}|${settings.vodBufferProgression}|${settings.vodAdaptiveBatchEnabled}|${settings.vodFixedBatchSegmentCount}|${settings.vodQualityMode}|${settings.vodBitrateMode}|${settings.vodAudioMode}`).toString("base64url");
   const existing = vodSessions.get(sessionId);
   if (existing) return existing;
   const durationSeconds = await probeDurationSeconds(original.originalUrl ?? "");
@@ -230,14 +233,15 @@ async function runVodSegmentBatchFfmpeg(session: VodSession, startSegmentIndex: 
   const lastSegmentName = `segment_${String(safeStartIndex + safeSegmentCount - 1).padStart(5, "0")}.ts`;
   const tempPlaylistPath = join(session.outputDir, `batch_${String(safeStartIndex).padStart(5, "0")}_${Date.now()}.m3u8`);
   const startedAt = new Date().toISOString();
-  const profile = getTranscodeProfile(session.quality, session.bufferPreset);
+  const profile = getVodRuntimeProfile(session);
   const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0", "-vf", buildVideoFilter(profile.width, profile.height), "-c:v", "libx264", "-preset", profile.preset, "-crf", String(profile.crf), "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "48", "-keyint_min", "48", "-sc_threshold", "0", "-force_key_frames", `expr:gte(t,n_forced*${session.segmentSeconds})`];
   if (profile.videoBitrateKbps) args.push("-maxrate", `${profile.videoBitrateKbps}k`, "-bufsize", `${Math.round(profile.videoBitrateKbps * 2)}k`);
-  args.push("-c:a", "aac", "-b:a", `${profile.audioBitrateKbps}k`, "-ac", "2", "-f", "hls", "-hls_time", String(session.segmentSeconds), "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_type", "mpegts", "-start_number", String(safeStartIndex), "-hls_segment_filename", join(session.outputDir, "segment_%05d.ts"), "-y", tempPlaylistPath);
+  pushVodAudioArgs(args, profile.audioBitrateKbps);
+  args.push("-f", "hls", "-hls_time", String(session.segmentSeconds), "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_type", "mpegts", "-start_number", String(safeStartIndex), "-hls_segment_filename", join(session.outputDir, "segment_%05d.ts"), "-y", tempPlaylistPath);
 
   session.status = "running";
   session.activeSegment = safeSegmentCount === 1 ? firstSegmentName : `${firstSegmentName}..${lastSegmentName}`;
-  session.activeBatch = { firstSegmentIndex: safeStartIndex, lastSegmentIndex: safeStartIndex + safeSegmentCount - 1, segmentCount: safeSegmentCount, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, startedAt };
+  session.activeBatch = { firstSegmentIndex: safeStartIndex, lastSegmentIndex: safeStartIndex + safeSegmentCount - 1, segmentCount: safeSegmentCount, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, startedAt, preset: profile.preset, crf: profile.crf, videoBitrateKbps: profile.videoBitrateKbps, audioMode: getEffectiveTranscodeSettings().vodAudioMode };
   session.updatedAt = new Date().toISOString();
   try {
     await runProcess(env.FFMPEG_PATH, args, session);
@@ -251,7 +255,37 @@ async function runVodSegmentBatchFfmpeg(session: VodSession, startSegmentIndex: 
   session.activeSegment = undefined;
   session.activeBatch = undefined;
   session.updatedAt = finishedAt;
-  writeSystemLog("info", "transcode-vod", "VOD segment batch generated.", { streamId: session.streamId, quality: session.quality, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, segmentCount: safeSegmentCount, speed: session.progress?.speed, fps: session.progress?.fps });
+  writeSystemLog("info", "transcode-vod", "VOD segment batch generated.", { streamId: session.streamId, quality: session.quality, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, segmentCount: safeSegmentCount, preset: profile.preset, crf: profile.crf, videoBitrateKbps: profile.videoBitrateKbps, speed: session.progress?.speed, fps: session.progress?.fps });
+}
+
+function getVodRuntimeProfile(session: VodSession): TranscodeProfile {
+  const settings = getEffectiveTranscodeSettings();
+  const profile = { ...getTranscodeProfile(session.quality, session.bufferPreset) };
+  const speed = session.speedStats?.average;
+  if (settings.vodQualityMode === "enabled") {
+    profile.preset = "ultrafast";
+    profile.crf = settings.vodCrf;
+    if (settings.vodBitrateMode === "auto" && profile.videoBitrateKbps) profile.videoBitrateKbps = Math.max(250, Math.round(profile.videoBitrateKbps * 0.6));
+  }
+  if (settings.vodQualityMode === "auto" && Number.isFinite(speed) && Number(speed) < 1.05) {
+    profile.preset = Number(speed) < 0.95 ? "ultrafast" : "superfast";
+    profile.crf = Math.min(35, Math.max(profile.crf, Number(speed) < 0.95 ? 30 : 28));
+    if (profile.videoBitrateKbps) profile.videoBitrateKbps = Math.max(250, Math.round(profile.videoBitrateKbps * (Number(speed) < 0.95 ? 0.55 : 0.75)));
+  }
+  return profile;
+}
+
+function pushVodAudioArgs(args: string[], audioBitrateKbps: number): void {
+  const audioMode = getEffectiveTranscodeSettings().vodAudioMode;
+  if (audioMode === "disabled") {
+    args.push("-an");
+    return;
+  }
+  if (audioMode === "copy") {
+    args.push("-c:a", "copy");
+    return;
+  }
+  args.push("-c:a", "aac", "-b:a", `${audioBitrateKbps}k`, "-ac", "2");
 }
 
 function parseVodProgress(session: VodSession, text: string): void {
