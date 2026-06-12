@@ -42,7 +42,7 @@ export function getTranscodeProfile(quality: TranscodeQuality, bufferPreset: Buf
     videoBitrateKbps,
     preset: settings.transcodePreset,
     crf,
-    hlsSegmentSeconds: hls.segmentSeconds,
+    hlsSegmentSeconds: settings.transcodeMode === "vod" ? settings.vodSegmentSeconds : hls.segmentSeconds,
     hlsListSize: hls.listSize
   };
 }
