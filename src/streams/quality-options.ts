@@ -1,3 +1,4 @@
+import { getEffectiveTranscodeMode } from "../settings/app-settings.js";
 import { TRANSCODE_QUALITIES, type TranscodeQuality } from "../stremio/manifest.js";
 import type { AggregatedStream, StremioStream } from "./types.js";
 
@@ -7,28 +8,27 @@ export function createVisibleStreamOptions(bestOriginal: AggregatedStream | null
   }
 
   const encodedOriginalId = encodeURIComponent(bestOriginal.id);
+  const transcodeMode = getEffectiveTranscodeMode();
+  const transcodePath = transcodeMode === "vod" ? "transcode-vod" : "transcode";
+  const modeLabel = transcodeMode === "vod" ? "VOD HLS" : "Live HLS";
 
   const original: StremioStream = {
     name: "Original",
     title: buildOriginalTitle(bestOriginal),
-    // Return the provider URL directly. Some Stremio players do not reliably follow
-    // a self-hosted redirect to Real-Debrid/StremThru playback URLs.
     url: bestOriginal.originalUrl,
     behaviorHints: {
-      bingeGroup: "selfhosted-aggregator-original",
       filename: bestOriginal.title,
       notWebReady: false
     }
   };
 
   const transcoded = TRANSCODE_QUALITIES.map((quality: TranscodeQuality): StremioStream => ({
-    name: quality === "auto" ? "Auto" : quality.toUpperCase(),
-    title: `Transcoded ${quality === "auto" ? "Auto" : quality.toUpperCase()} from ${bestOriginal.quality ?? "original"}`,
-    url: `${requestBaseUrl}/transcode/${encodedOriginalId}/${quality}/master.m3u8`,
+    name: quality === "auto" ? `Auto ${modeLabel}` : `${quality.toUpperCase()} ${modeLabel}`,
+    title: `${modeLabel} ${quality === "auto" ? "Auto" : quality.toUpperCase()} from ${bestOriginal.quality ?? "original"}`,
+    url: `${requestBaseUrl}/${transcodePath}/${encodedOriginalId}/${quality}/master.m3u8`,
     behaviorHints: {
-      bingeGroup: `selfhosted-aggregator-${quality}`,
       notWebReady: false,
-      filename: `${bestOriginal.title}.${quality}.m3u8`
+      filename: `${bestOriginal.title}.${transcodeMode}.${quality}.m3u8`
     }
   }));
 
