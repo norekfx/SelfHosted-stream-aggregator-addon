@@ -5,7 +5,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { env, getTranscodeCacheDir } from "../config/env.js";
-import { getEffectiveMaxTranscodeSessions, getEffectiveTranscodeBufferPreset } from "../settings/app-settings.js";
+import { getEffectiveMaxTranscodeSessions, getEffectiveTranscodeBufferPreset, getEffectiveTranscodeSettings } from "../settings/app-settings.js";
 import type { BufferPreset, TranscodeQuality } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream } from "../streams/types.js";
@@ -28,6 +28,7 @@ const sessionQueues = new Map<string, Promise<void>>();
 export function listVodTranscodeSessions(): Array<any> {
   return Array.from(vodSessions.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50).map((session) => {
     const profile = getTranscodeProfile(session.quality, session.bufferPreset);
+    const settings = getEffectiveTranscodeSettings();
     const generatedSegments = getGeneratedSegmentIndexes(session);
     const segmentCount = generatedSegments.length;
     const totalSegments = getSegmentCount(session);
@@ -48,6 +49,9 @@ export function listVodTranscodeSessions(): Array<any> {
         estimatedGeneratedSeconds: segmentCount * session.segmentSeconds,
         segmentSeconds: session.segmentSeconds,
         targetSeconds: session.targetBufferSeconds,
+        progression: settings.vodBufferProgression,
+        adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled,
+        fixedBatchSegmentCount: settings.vodFixedBatchSegmentCount,
         batchSegmentCount: getVodBatchSegmentCount(session),
         prewarmSegmentCount: getVodPrewarmSegmentCount(session),
         generatedRanges: getGeneratedSegmentRanges(generatedSegments).slice(0, 12),
@@ -111,19 +115,20 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
 
 async function getOrCreateVodSession(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset, original: AggregatedStream): Promise<VodSession> {
   const profile = getTranscodeProfile(quality, bufferPreset);
-  const sessionId = Buffer.from(`${streamId}|${quality}|${bufferPreset}|vod`).toString("base64url");
+  const settings = getEffectiveTranscodeSettings();
+  const sessionId = Buffer.from(`${streamId}|${quality}|${bufferPreset}|vod|${settings.vodSegmentSeconds}|${settings.vodStartupBufferSeconds}|${settings.vodBufferProgression}|${settings.vodAdaptiveBatchEnabled}|${settings.vodFixedBatchSegmentCount}`).toString("base64url");
   const existing = vodSessions.get(sessionId);
   if (existing) return existing;
   const durationSeconds = await probeDurationSeconds(original.originalUrl ?? "");
   const outputDir = join(getTranscodeCacheDir(), "vod", sessionId);
   mkdirSync(outputDir, { recursive: true });
   const now = new Date().toISOString();
-  const session: VodSession = { id: sessionId, streamId, title: original.title || original.name, sourceAddon: original.sourceAddon, sourceQuality: original.quality, quality, bufferPreset, originalUrl: original.originalUrl ?? "", durationSeconds, segmentSeconds: profile.hlsSegmentSeconds, targetBufferSeconds: getTargetBufferSeconds(bufferPreset), outputDir, playlistPath: join(outputDir, "master.m3u8"), createdAt: now, updatedAt: now, status: "starting", speedStats: { samples: 0 } };
+  const session: VodSession = { id: sessionId, streamId, title: original.title || original.name, sourceAddon: original.sourceAddon, sourceQuality: original.quality, quality, bufferPreset, originalUrl: original.originalUrl ?? "", durationSeconds, segmentSeconds: profile.hlsSegmentSeconds, targetBufferSeconds: settings.vodStartupBufferSeconds, outputDir, playlistPath: join(outputDir, "master.m3u8"), createdAt: now, updatedAt: now, status: "starting", speedStats: { samples: 0 } };
   await writeFile(session.playlistPath, buildVodPlaylist(session), "utf-8");
   session.status = "exited";
   session.updatedAt = new Date().toISOString();
   vodSessions.set(sessionId, session);
-  writeSystemLog("info", "transcode-vod", "VOD playlist prepared.", { streamId, quality, durationSeconds, segmentSeconds: session.segmentSeconds, targetBufferSeconds: session.targetBufferSeconds });
+  writeSystemLog("info", "transcode-vod", "VOD playlist prepared.", { streamId, quality, durationSeconds, segmentSeconds: session.segmentSeconds, targetBufferSeconds: session.targetBufferSeconds, progression: settings.vodBufferProgression, adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled });
   return session;
 }
 
@@ -194,16 +199,19 @@ async function generateVodSegmentBatch(session: VodSession, startIndex: number, 
 
 function ensureVodBufferAhead(session: VodSession, currentIndex: number): void {
   const totalSegments = getSegmentCount(session);
-  const desiredEndIndex = Math.min(totalSegments - 1, currentIndex + getVodPrewarmSegmentCount(session));
+  const settings = getEffectiveTranscodeSettings();
+  const desiredEndIndex = settings.vodBufferProgression === "infinite" ? totalSegments - 1 : Math.min(totalSegments - 1, currentIndex + getVodPrewarmSegmentCount(session));
   const firstMissingIndex = findFirstMissingSegmentIndex(session, currentIndex + 1, desiredEndIndex);
   if (firstMissingIndex === undefined) return;
-  const count = desiredEndIndex - firstMissingIndex + 1;
+  const count = settings.vodBufferProgression === "infinite" ? getVodBatchSegmentCount(session) : desiredEndIndex - firstMissingIndex + 1;
   prewarmVodSegments(session, firstMissingIndex, count);
 }
 
 function prewarmVodSegments(session: VodSession, startIndex: number, count: number): void {
   if (startIndex < 0 || startIndex >= getSegmentCount(session)) return;
-  generateVodSegmentBatch(session, startIndex, count).catch((error) => {
+  generateVodSegmentBatch(session, startIndex, count).then(() => {
+    if (getEffectiveTranscodeSettings().vodBufferProgression === "infinite") ensureVodBufferAhead(session, startIndex + count - 1);
+  }).catch((error) => {
     const message = error instanceof Error ? error.message : "VOD prewarm failed.";
     session.error = message;
     session.status = "failed";
@@ -284,15 +292,17 @@ function getTargetBufferSeconds(bufferPreset: BufferPreset): number {
 }
 
 function getVodBatchSegmentCount(session: VodSession): number {
-  const targetSegments = Math.ceil(session.targetBufferSeconds / session.segmentSeconds);
-  const preferredSegments = Math.max(3, targetSegments);
-  return Math.min(getSegmentCount(session), Math.max(1, preferredSegments));
+  const settings = getEffectiveTranscodeSettings();
+  if (!settings.vodAdaptiveBatchEnabled) return Math.min(getSegmentCount(session), Math.max(1, settings.vodFixedBatchSegmentCount));
+  const generatedSeconds = countGeneratedSegments(session) * session.segmentSeconds;
+  const step = Math.max(1, Math.floor(generatedSeconds / 120));
+  return Math.min(getSegmentCount(session), Math.max(2, step * 4));
 }
 
 function getVodPrewarmSegmentCount(session: VodSession): number {
-  const targetSegments = Math.ceil(session.targetBufferSeconds / session.segmentSeconds);
-  const preferredSegments = Math.max(getVodBatchSegmentCount(session) * 2, targetSegments * 2, 6);
-  return Math.min(getSegmentCount(session), Math.max(1, preferredSegments));
+  const settings = getEffectiveTranscodeSettings();
+  if (settings.vodBufferProgression === "infinite") return getSegmentCount(session);
+  return Math.min(getSegmentCount(session), Math.max(1, Math.ceil(session.targetBufferSeconds / session.segmentSeconds)));
 }
 
 function findFirstMissingSegmentIndex(session: VodSession, startIndex: number, endIndex: number): number | undefined {
