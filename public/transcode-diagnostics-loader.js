@@ -1,6 +1,13 @@
 const TRANSCODE_DIAGNOSTICS_MODES = ["auto", "4k", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"];
 
+function disableLegacyVodDiagnosticHandler() {
+  if (typeof window.handleVodDiagnosticClick === "function") {
+    document.removeEventListener("click", window.handleVodDiagnosticClick, true);
+  }
+}
+
 function installMovieTranscodeDiagnostics() {
+  disableLegacyVodDiagnosticHandler();
   const candidateSelect = document.getElementById("transcodeCandidateSelect");
   const loadButton = document.getElementById("loadTranscodeCandidatesBtn");
   const modeSelect = document.getElementById("transcodeModeSelect");
@@ -142,6 +149,7 @@ function getSelectedTranscodeDiagnosticUrl() {
 
 function playSelectedTranscodeDiagnostic(event) {
   event?.preventDefault?.();
+  event?.stopImmediatePropagation?.();
   const playbackMode = document.getElementById("transcodePlaybackModeSelect")?.value ?? "live";
   const mode = document.getElementById("transcodeModeSelect")?.value ?? "original";
   const url = getSelectedTranscodeDiagnosticUrl();
@@ -154,6 +162,7 @@ function playSelectedTranscodeDiagnostic(event) {
 
 async function copySelectedTranscodeDiagnosticUrl(event) {
   event?.preventDefault?.();
+  event?.stopImmediatePropagation?.();
   const url = getSelectedTranscodeDiagnosticUrl();
   if (!url) {
     showTranscodeDiagnosticToast("Najpierw znajdź film i wybierz tryb transkodowania.");
@@ -175,6 +184,10 @@ function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
     window.transcodeDiagnostics.hls.destroy();
     window.transcodeDiagnostics.hls = null;
   }
+
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
 
   const isHls = /\.m3u8(?:$|[?#])/.test(url);
   setTranscodeStatus(`Odtwarzam: ${mode} / ${playbackMode}${isHls ? " HLS" : ""}<br><code>${escapeDiagnosticHtml(url)}</code>`, false);
@@ -295,6 +308,7 @@ function escapeDiagnosticHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 }
 
+disableLegacyVodDiagnosticHandler();
 installMovieTranscodeDiagnostics();
 setInterval(installMovieTranscodeDiagnostics, 1000);
 setInterval(refreshDiagnosticTranscodeStatus, 2000);
