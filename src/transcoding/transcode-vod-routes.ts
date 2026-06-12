@@ -11,6 +11,7 @@ import { getSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream } from "../streams/types.js";
 import { writeSystemLog } from "../system/system-log.js";
 import { getTranscodeProfile, isBufferPreset, isTranscodeQuality, type TranscodeProfile } from "./transcode-profiles.js";
+import { applyVodAutoQualityLadder } from "./vod-quality-adapter.js";
 import { stopActiveTranscodeSessions, type TranscodeSpeedStats } from "./transcode-session.js";
 
 const vodParamsSchema = z.object({ streamId: z.string().min(1), quality: z.string() });
@@ -267,11 +268,7 @@ function getVodRuntimeProfile(session: VodSession): TranscodeProfile {
     profile.crf = settings.vodCrf;
     if (settings.vodBitrateMode === "auto" && profile.videoBitrateKbps) profile.videoBitrateKbps = Math.max(250, Math.round(profile.videoBitrateKbps * 0.6));
   }
-  if (settings.vodQualityMode === "auto" && Number.isFinite(speed) && Number(speed) < 1.05) {
-    profile.preset = Number(speed) < 0.95 ? "ultrafast" : "superfast";
-    profile.crf = Math.min(35, Math.max(profile.crf, Number(speed) < 0.95 ? 30 : 28));
-    if (profile.videoBitrateKbps) profile.videoBitrateKbps = Math.max(250, Math.round(profile.videoBitrateKbps * (Number(speed) < 0.95 ? 0.55 : 0.75)));
-  }
+  if (settings.vodQualityMode === "auto") applyVodAutoQualityLadder(profile, speed);
   return profile;
 }
 
