@@ -85,6 +85,7 @@ async function loadTranscodeMovieById() {
     }
     setTranscodeStatus(`Załadowano film ${movieId}. Możesz testować Original, Live HLS albo VOD HLS seek.`, false);
     setTranscodeDetails({ media: `movie:${movieId}`, selected: candidate.title, availableModes: Object.keys(candidate.urls), streams: streams.map((stream) => ({ name: stream.name, title: stream.title, url: stream.url })) });
+    await refreshDiagnosticTranscodeStatus();
     showTranscodeDiagnosticToast("Film załadowany do testów transkodowania.");
   } catch (error) {
     if (candidateSelect) candidateSelect.innerHTML = '<option value="">Błąd ładowania filmu.</option>';
@@ -174,10 +175,11 @@ function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
 
   const isHls = /\.m3u8(?:$|[?#])/.test(url);
   setTranscodeStatus(`Odtwarzam: ${mode} / ${playbackMode}${isHls ? " HLS" : ""}<br><code>${escapeDiagnosticHtml(url)}</code>`, false);
+  refreshDiagnosticTranscodeStatus();
 
   if (isHls && window.Hls && Hls.isSupported()) {
     const hls = new Hls({ debug: false, lowLatencyMode: playbackMode === "live" });
-    window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), hls };
+    window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), hls, currentPlaybackMode: playbackMode, currentMode: mode, currentUrl: url };
     hls.on(Hls.Events.ERROR, (_, data) => {
       setTranscodeStatus(`HLS error: ${escapeDiagnosticHtml(data.type)} / ${escapeDiagnosticHtml(data.details)} / fatal=${escapeDiagnosticHtml(data.fatal)}`, true, true);
     });
@@ -185,9 +187,81 @@ function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
     hls.attachMedia(video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
   } else {
+    window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), currentPlaybackMode: playbackMode, currentMode: mode, currentUrl: url };
     video.src = url;
     video.play().catch(() => {});
   }
+}
+
+async function refreshDiagnosticTranscodeStatus() {
+  const liveStatus = document.getElementById("transcodeLiveStatus");
+  if (!liveStatus) return;
+  const candidateId = document.getElementById("transcodeCandidateSelect")?.value;
+  const mode = document.getElementById("transcodeModeSelect")?.value ?? window.transcodeDiagnostics?.currentMode ?? "auto";
+  const playbackMode = document.getElementById("transcodePlaybackModeSelect")?.value ?? window.transcodeDiagnostics?.currentPlaybackMode ?? "live";
+
+  try {
+    const response = await fetch("/transcode/sessions");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const sessions = data.sessions ?? [];
+    const session = findDiagnosticSession(sessions, candidateId, mode, playbackMode);
+    if (!session) {
+      liveStatus.classList.add("empty");
+      liveStatus.textContent = "Brak aktywnych danych diagnostycznych dla wybranego testu.";
+      return;
+    }
+    liveStatus.classList.remove("empty");
+    liveStatus.innerHTML = renderDiagnosticSession(session);
+    setTranscodeDetails(session);
+  } catch (error) {
+    liveStatus.classList.add("empty");
+    liveStatus.textContent = `Nie udało się pobrać diagnostyki transkodowania: ${error instanceof Error ? error.message : "nieznany błąd"}`;
+  }
+}
+
+function findDiagnosticSession(sessions, candidateId, mode, playbackMode) {
+  const normalizedMode = mode === "original" ? undefined : mode;
+  const wantedVod = playbackMode === "vod";
+  const matching = sessions.filter((session) => {
+    if (candidateId && session.streamId !== candidateId) return false;
+    if (normalizedMode && session.quality !== normalizedMode) return false;
+    if (wantedVod && session.mode !== "vod") return false;
+    if (!wantedVod && session.mode === "vod") return false;
+    return true;
+  });
+  return matching.find((session) => ["running", "starting"].includes(session.status)) ?? matching[0] ?? sessions.find((session) => ["running", "starting"].includes(session.status)) ?? sessions[0];
+}
+
+function renderDiagnosticSession(session) {
+  const buffer = session.buffer ?? {};
+  const stats = session.speedStats ?? {};
+  const activeBatch = buffer.activeBatch ?? session.activeBatch;
+  const lastBatch = buffer.lastBatch ?? session.lastBatch;
+  const ranges = Array.isArray(buffer.generatedRanges) ? buffer.generatedRanges : [];
+  return `
+    <div class="kv-list">
+      <div class="kv"><span>Tryb</span><strong>${escapeDiagnosticHtml(session.modeLabel ?? session.mode ?? "-")} / ${escapeDiagnosticHtml(session.quality ?? "-")} / ${escapeDiagnosticHtml(session.status ?? "-")}</strong></div>
+      <div class="kv"><span>Prędkość</span><strong>teraz ${escapeDiagnosticHtml(session.progress?.speed ?? "-")} · fps ${escapeDiagnosticHtml(session.progress?.fps ?? "-")} · avg ${formatDiagnosticSpeed(stats.average)}</strong></div>
+      <div class="kv"><span>Segmenty</span><strong>${escapeDiagnosticHtml(buffer.generatedSegments ?? buffer.segmentCount ?? 0)} / ${escapeDiagnosticHtml(buffer.totalSegments ?? "-")} wygenerowane · ${escapeDiagnosticHtml(buffer.remainingSegments ?? "-")} zostało</strong></div>
+      <div class="kv"><span>Bufor na dysku</span><strong>${escapeDiagnosticHtml(buffer.estimatedGeneratedSeconds ?? buffer.estimatedSeconds ?? 0)}s · segment ${escapeDiagnosticHtml(buffer.segmentSeconds ?? "-")}s · target ${escapeDiagnosticHtml(buffer.targetSeconds ?? "-")}s</strong></div>
+      <div class="kv"><span>Paczki</span><strong>batch ${escapeDiagnosticHtml(buffer.batchSegmentCount ?? "-")} segmentów · prewarm ${escapeDiagnosticHtml(buffer.prewarmSegmentCount ?? "-")} segmentów · kolejka ${escapeDiagnosticHtml(session.queuedSegments ?? 0)}</strong></div>
+      <div class="kv"><span>Aktywna paczka</span><strong>${renderBatchLabel(activeBatch)}</strong></div>
+      <div class="kv"><span>Ostatnia paczka</span><strong>${renderBatchLabel(lastBatch)}</strong></div>
+      <div class="kv"><span>Zakresy na dysku</span><strong>${ranges.length ? ranges.map((range) => `${range.start}-${range.end}`).join(", ") : "-"}</strong></div>
+    </div>
+  `;
+}
+
+function renderBatchLabel(batch) {
+  if (!batch) return "-";
+  const duration = Number.isFinite(Number(batch.durationSeconds)) ? `${Math.round(Number(batch.durationSeconds))}s` : "-";
+  return `${escapeDiagnosticHtml(batch.firstSegmentName ?? batch.firstSegmentIndex ?? "?")} → ${escapeDiagnosticHtml(batch.lastSegmentName ?? batch.lastSegmentIndex ?? "?")} · ${escapeDiagnosticHtml(batch.segmentCount ?? "?")} segmentów · ${duration} · ${escapeDiagnosticHtml(batch.speed ?? "")}`;
+}
+
+function formatDiagnosticSpeed(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(2)}x` : "-";
 }
 
 function setTranscodeStatus(message, isEmpty = false, append = false) {
@@ -217,3 +291,4 @@ function escapeDiagnosticHtml(value) {
 
 installMovieTranscodeDiagnostics();
 setInterval(installMovieTranscodeDiagnostics, 1000);
+setInterval(refreshDiagnosticTranscodeStatus, 2000);
