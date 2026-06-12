@@ -139,12 +139,27 @@ function normalizeTranscodeDiagnosticUrl(url) {
 
 function getSelectedTranscodeDiagnosticUrl() {
   const candidateId = document.getElementById("transcodeCandidateSelect")?.value;
-  const candidate = window.transcodeDiagnostics?.candidates?.find((item) => item.id === candidateId);
+  const candidates = window.transcodeDiagnostics?.candidates ?? [];
+  const candidate = candidates.find((item) => item.id === candidateId) ?? candidates[0];
   const mode = document.getElementById("transcodeModeSelect")?.value ?? "original";
   const playbackMode = document.getElementById("transcodePlaybackModeSelect")?.value ?? "live";
   if (!candidate) return undefined;
   if (mode === "original") return candidate.urls.original;
-  return playbackMode === "vod" ? candidate.urls[`vod:${mode}`] ?? candidate.urls[mode]?.replace("/transcode/", "/transcode-vod/") : candidate.urls[mode] ?? candidate.urls[`vod:${mode}`]?.replace("/transcode-vod/", "/transcode/");
+  return candidate.urls[playbackMode === "vod" ? `vod:${mode}` : mode] ?? buildFallbackTranscodeDiagnosticUrl(candidate, mode, playbackMode);
+}
+
+function buildFallbackTranscodeDiagnosticUrl(candidate, mode, playbackMode) {
+  const streamId = getDiagnosticCandidateStreamId(candidate);
+  if (!streamId || !TRANSCODE_DIAGNOSTICS_MODES.includes(mode)) return undefined;
+  const path = playbackMode === "vod" ? "transcode-vod" : "transcode";
+  return `${window.location.origin}/${path}/${encodeURIComponent(streamId)}/${encodeURIComponent(mode)}/master.m3u8`;
+}
+
+function getDiagnosticCandidateStreamId(candidate) {
+  const fromUrls = Object.values(candidate?.urls ?? {}).find((url) => /\/transcode(?:-vod)?\//.test(String(url)))?.match(/\/transcode(?:-vod)?\/([^/]+)\//)?.[1];
+  if (fromUrls) return decodeURIComponent(fromUrls);
+  if (candidate?.id && !/^tt\d+$/i.test(candidate.id)) return candidate.id;
+  return undefined;
 }
 
 function playSelectedTranscodeDiagnostic(event) {
@@ -154,7 +169,8 @@ function playSelectedTranscodeDiagnostic(event) {
   const mode = document.getElementById("transcodeModeSelect")?.value ?? "original";
   const url = getSelectedTranscodeDiagnosticUrl();
   if (!url) {
-    showTranscodeDiagnosticToast("Najpierw znajdź film i wybierz tryb transkodowania.");
+    showTranscodeDiagnosticToast("Nie udało się zbudować URL transkodowania dla tego filmu. Kliknij Znajdź film ponownie.");
+    setTranscodeDetails({ error: "missing_transcode_url", mode, playbackMode, candidates: window.transcodeDiagnostics?.candidates ?? [], streams: window.transcodeDiagnostics?.streams ?? [] });
     return;
   }
   playTranscodeDiagnosticUrl(url, mode, playbackMode);
@@ -165,7 +181,7 @@ async function copySelectedTranscodeDiagnosticUrl(event) {
   event?.stopImmediatePropagation?.();
   const url = getSelectedTranscodeDiagnosticUrl();
   if (!url) {
-    showTranscodeDiagnosticToast("Najpierw znajdź film i wybierz tryb transkodowania.");
+    showTranscodeDiagnosticToast("Nie udało się zbudować URL transkodowania dla tego filmu. Kliknij Znajdź film ponownie.");
     return;
   }
   try {
