@@ -1,5 +1,18 @@
 const TRANSCODE_DIAGNOSTICS_MODES = ["auto", "4k", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"];
 
+function installEarlyTranscodeDiagnosticClickCapture() {
+  if (window.__transcodeDiagnosticEarlyCapture === "1") return;
+  window.__transcodeDiagnosticEarlyCapture = "1";
+  window.addEventListener("click", (event) => {
+    const target = event.target?.closest?.("#playTranscodeCandidateBtn,#copyTranscodeUrlBtn");
+    if (!target) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (target.id === "copyTranscodeUrlBtn") copySelectedTranscodeDiagnosticUrl(event);
+    else playSelectedTranscodeDiagnostic(event);
+  }, true);
+}
+
 function disableLegacyVodDiagnosticHandler() {
   if (typeof window.handleVodDiagnosticClick === "function") {
     document.removeEventListener("click", window.handleVodDiagnosticClick, true);
@@ -7,6 +20,7 @@ function disableLegacyVodDiagnosticHandler() {
 }
 
 function installMovieTranscodeDiagnostics() {
+  installEarlyTranscodeDiagnosticClickCapture();
   disableLegacyVodDiagnosticHandler();
   const candidateSelect = document.getElementById("transcodeCandidateSelect");
   const loadButton = document.getElementById("loadTranscodeCandidatesBtn");
@@ -324,6 +338,7 @@ function escapeDiagnosticHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 }
 
+installEarlyTranscodeDiagnosticClickCapture();
 disableLegacyVodDiagnosticHandler();
 installMovieTranscodeDiagnostics();
 setInterval(installMovieTranscodeDiagnostics, 1000);
