@@ -225,8 +225,7 @@ async function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
   refreshDiagnosticTranscodeStatus();
 
   if (isHls) {
-    const ready = await preflightHlsPlaylist(url, mode, playbackMode);
-    if (!ready) return;
+    void preflightHlsPlaylist(url, mode, playbackMode);
   }
 
   if (isHls && window.Hls && Hls.isSupported()) {
@@ -251,16 +250,16 @@ async function preflightHlsPlaylist(url, mode, playbackMode) {
     const text = await response.text().catch(() => "");
     setTranscodeDetails({ mode, playbackMode, url, playlistStatus: response.status, playlistPreview: text.slice(0, 800), candidates: window.transcodeDiagnostics?.candidates ?? [] });
     if (!response.ok) {
-      setTranscodeStatus(`Playlist HLS nie jest gotowa: HTTP ${response.status}<br><code>${escapeDiagnosticHtml(url)}</code><pre>${escapeDiagnosticHtml(text.slice(0, 800))}</pre>`, true);
+      setTranscodeStatus(`Playlist HLS jeszcze nie jest gotowa: HTTP ${response.status}<br><code>${escapeDiagnosticHtml(url)}</code><pre>${escapeDiagnosticHtml(text.slice(0, 800))}</pre>`, false, true);
       return false;
     }
     if (!/^#EXTM3U/m.test(text)) {
-      setTranscodeStatus(`Endpoint nie zwrócił playlisty HLS.<br><code>${escapeDiagnosticHtml(url)}</code><pre>${escapeDiagnosticHtml(text.slice(0, 800))}</pre>`, true);
+      setTranscodeStatus(`Endpoint diagnostyczny nie zwrócił jeszcze playlisty HLS.<br><code>${escapeDiagnosticHtml(url)}</code><pre>${escapeDiagnosticHtml(text.slice(0, 800))}</pre>`, false, true);
       return false;
     }
     return true;
   } catch (error) {
-    setTranscodeStatus(`Nie udało się pobrać playlisty HLS: ${escapeDiagnosticHtml(error?.message ?? error)}<br><code>${escapeDiagnosticHtml(url)}</code>`, true);
+    setTranscodeStatus(`Diagnostyczny preflight playlisty HLS nie powiódł się, ale odtwarzacz nadal próbuje uruchomić stream: ${escapeDiagnosticHtml(error?.message ?? error)}<br><code>${escapeDiagnosticHtml(url)}</code>`, false, true);
     setTranscodeDetails({ mode, playbackMode, url, error: String(error), candidates: window.transcodeDiagnostics?.candidates ?? [] });
     return false;
   }
