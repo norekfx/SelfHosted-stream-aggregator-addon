@@ -36,13 +36,15 @@ export function getTranscodeProfile(quality: TranscodeQuality, bufferPreset: Buf
   const videoBitrateKbps = settings.transcodeBitrateMode === "range" && base.videoBitrateKbps
     ? clamp(base.videoBitrateKbps, settings.transcodeBitrateMinKbps, settings.transcodeBitrateMaxKbps)
     : base.videoBitrateKbps;
+  const isVod = settings.transcodeMode === "vod";
+  const vodBitrate = settings.vodBitrateMode === "auto" ? videoBitrateKbps : Number(settings.vodBitrateMode);
 
   return {
     ...base,
-    videoBitrateKbps,
-    preset: settings.transcodePreset,
-    crf,
-    hlsSegmentSeconds: settings.transcodeMode === "vod" ? settings.vodSegmentSeconds : hls.segmentSeconds,
+    videoBitrateKbps: isVod ? vodBitrate : videoBitrateKbps,
+    preset: isVod && settings.vodQualityMode === "enabled" ? "ultrafast" : settings.transcodePreset,
+    crf: isVod && settings.vodQualityMode === "enabled" ? settings.vodCrf : crf,
+    hlsSegmentSeconds: isVod ? settings.vodSegmentSeconds : hls.segmentSeconds,
     hlsListSize: hls.listSize
   };
 }
