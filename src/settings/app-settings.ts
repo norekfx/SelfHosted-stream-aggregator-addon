@@ -7,6 +7,11 @@ export type MetadataSyncIntervalMinutes = 0 | 10 | 30 | 60 | 120 | 240 | 480 | 7
 export type DocchiPublicMappingMode = "disabled" | "animation_series" | "series" | "all";
 export type DocchiKometaAnimeIdsRefreshInterval = "daily" | "weekly" | "biweekly" | "monthly" | "once";
 export type DocchiStreamForceMode = "enabled" | "disabled" | "partial";
+export type TranscodeMode = "vod" | "live";
+export type VodBufferProgression = "target" | "infinite";
+export type VodQualityMode = "disabled" | "enabled" | "auto";
+export type VodBitrateMode = "auto" | "250" | "500" | "800" | "1200" | "1800" | "2500" | "3500" | "5000" | "8000" | "12000" | "18000";
+export type VodAudioMode = "aac" | "copy" | "disabled";
 
 export type AppSettings = {
   preferredAudioLanguage: string;
@@ -43,11 +48,26 @@ export type AppSettings = {
   transcodeBitrateMode: string;
   transcodeBitrateMinKbps: number;
   transcodeBitrateMaxKbps: number;
+  transcodeMode: TranscodeMode;
+  vodSegmentSeconds: number;
+  vodStartupBufferSeconds: number;
+  vodBufferProgression: VodBufferProgression;
+  vodAdaptiveBatchEnabled: boolean;
+  vodFixedBatchSegmentCount: number;
+  vodQualityMode: VodQualityMode;
+  vodCrf: number;
+  vodBitrateMode: VodBitrateMode;
+  vodAudioMode: VodAudioMode;
 };
 
 const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language.code));
 export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "4k"] as const;
 export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
+export const TRANSCODE_MODES = ["vod", "live"] as const;
+export const VOD_BUFFER_PROGRESSION_MODES = ["target", "infinite"] as const;
+export const VOD_QUALITY_MODES = ["disabled", "enabled", "auto"] as const;
+export const VOD_BITRATE_MODES = ["auto", "250", "500", "800", "1200", "1800", "2500", "3500", "5000", "8000", "12000", "18000"] as const;
+export const VOD_AUDIO_MODES = ["aac", "copy", "disabled"] as const;
 export const LINK_VALIDATION_MODES = ["best", "all", "5", "10", "20", "40", "80", "100", "150", "200"] as const;
 export const METADATA_SYNC_INTERVALS = [0, 10, 30, 60, 120, 240, 480, 720, 1440] as const;
 export const DOCCHI_PUBLIC_MAPPING_MODES = ["disabled", "animation_series", "series", "all"] as const;
@@ -88,7 +108,17 @@ const defaults: AppSettings = {
   transcodeCrfMax: 26,
   transcodeBitrateMode: "auto",
   transcodeBitrateMinKbps: 1000,
-  transcodeBitrateMaxKbps: 6000
+  transcodeBitrateMaxKbps: 6000,
+  transcodeMode: "vod",
+  vodSegmentSeconds: 10,
+  vodStartupBufferSeconds: 20,
+  vodBufferProgression: "infinite",
+  vodAdaptiveBatchEnabled: true,
+  vodFixedBatchSegmentCount: 2,
+  vodQualityMode: "auto",
+  vodCrf: 26,
+  vodBitrateMode: "auto",
+  vodAudioMode: "aac"
 };
 
 export function getAppSettings(): AppSettings {
@@ -98,7 +128,7 @@ export function getAppSettings(): AppSettings {
 
   const settings = { ...defaults };
   for (const row of rows) {
-    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb", "metadataSyncIntervalMinutes"].includes(row.key)) {
+    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb", "metadataSyncIntervalMinutes", "vodSegmentSeconds", "vodStartupBufferSeconds", "vodFixedBatchSegmentCount", "vodCrf"].includes(row.key)) {
       const parsed = Number.parseInt(row.value, 10);
       if (Number.isFinite(parsed)) {
         (settings as Record<string, unknown>)[row.key] = parsed;
@@ -106,8 +136,8 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "preferDebrid" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails" || row.key === "docchiKometaAnimeIdsEnabled") {
-      settings[row.key] = row.value === "true";
+    if (row.key === "preferDebrid" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails" || row.key === "docchiKometaAnimeIdsEnabled" || row.key === "vodAdaptiveBatchEnabled") {
+      (settings as Record<string, unknown>)[row.key] = row.value === "true";
       continue;
     }
 
@@ -181,6 +211,10 @@ export function getEffectiveTranscodeSettings(): AppSettings {
   return getAppSettings();
 }
 
+export function getEffectiveTranscodeMode(): TranscodeMode {
+  return getAppSettings().transcodeMode;
+}
+
 export function getMetadataSyncTtlMs(): number {
   const minutes = getAppSettings().metadataSyncIntervalMinutes;
   return minutes <= 0 ? 0 : minutes * 60 * 1000;
@@ -232,6 +266,11 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   }
 
   if (!TRANSCODE_PRESETS.includes(normalized.transcodePreset as never)) normalized.transcodePreset = defaults.transcodePreset;
+  if (!TRANSCODE_MODES.includes(normalized.transcodeMode as never)) normalized.transcodeMode = defaults.transcodeMode;
+  if (!VOD_BUFFER_PROGRESSION_MODES.includes(normalized.vodBufferProgression as never)) normalized.vodBufferProgression = defaults.vodBufferProgression;
+  if (!VOD_QUALITY_MODES.includes(normalized.vodQualityMode as never)) normalized.vodQualityMode = defaults.vodQualityMode;
+  if (!VOD_BITRATE_MODES.includes(normalized.vodBitrateMode as never)) normalized.vodBitrateMode = defaults.vodBitrateMode;
+  if (!VOD_AUDIO_MODES.includes(normalized.vodAudioMode as never)) normalized.vodAudioMode = defaults.vodAudioMode;
   if (!["auto", "range"].includes(normalized.transcodeCrfMode)) normalized.transcodeCrfMode = "auto";
   if (!["auto", "range"].includes(normalized.transcodeBitrateMode)) normalized.transcodeBitrateMode = "auto";
 
@@ -242,6 +281,12 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.transcodeBitrateMinKbps = clampNumber(normalized.transcodeBitrateMinKbps, 150, 50000, defaults.transcodeBitrateMinKbps);
   normalized.transcodeBitrateMaxKbps = clampNumber(normalized.transcodeBitrateMaxKbps, 150, 50000, defaults.transcodeBitrateMaxKbps);
   if (normalized.transcodeBitrateMinKbps > normalized.transcodeBitrateMaxKbps) normalized.transcodeBitrateMinKbps = normalized.transcodeBitrateMaxKbps;
+
+  normalized.vodSegmentSeconds = clampNumber(normalized.vodSegmentSeconds, 2, 30, defaults.vodSegmentSeconds);
+  normalized.vodStartupBufferSeconds = clampNumber(normalized.vodStartupBufferSeconds, 1, 600, defaults.vodStartupBufferSeconds);
+  normalized.vodAdaptiveBatchEnabled = normalized.vodAdaptiveBatchEnabled !== false;
+  normalized.vodFixedBatchSegmentCount = clampNumber(normalized.vodFixedBatchSegmentCount, 1, 100, defaults.vodFixedBatchSegmentCount);
+  normalized.vodCrf = clampNumber(normalized.vodCrf, 16, 35, defaults.vodCrf);
 
   return normalized;
 }
