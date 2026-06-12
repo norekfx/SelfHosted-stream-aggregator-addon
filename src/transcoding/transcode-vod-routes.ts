@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, mkdirSync, readdirSync } from "node:fs";
-import { rename, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { FastifyInstance } from "fastify";
@@ -45,7 +45,7 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
       prepareExclusiveVodTranscode();
       const session = await getOrCreateVodSession(params.data.streamId, params.data.quality, bufferPreset, original);
       await ensureVodStartupBuffer(session);
-      prewarmVodSegments(session, getStartupSegmentCount(session), 2);
+      prewarmVodSegments(session, getStartupSegmentCount(session), getVodBatchSegmentCount(session));
       reply.header("content-type", "application/vnd.apple.mpegurl");
       reply.header("cache-control", "no-store");
       return createReadStream(session.playlistPath);
@@ -69,7 +69,7 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
       if (!existsSync(segmentPath)) await generateVodSegment(session, params.data.segment);
       if (!existsSync(segmentPath)) { reply.code(503); return { error: "VOD segment was not generated." }; }
       const segmentIndex = parseSegmentIndex(params.data.segment);
-      prewarmVodSegments(session, segmentIndex + 1, 2);
+      prewarmVodSegments(session, segmentIndex + 1, getVodBatchSegmentCount(session));
       reply.header("content-type", "video/mp2t");
       reply.header("cache-control", "public, max-age=300");
       return createReadStream(segmentPath);
@@ -123,9 +123,7 @@ function prepareExclusiveVodTranscode(): void {
 
 async function ensureVodStartupBuffer(session: VodSession): Promise<void> {
   const requiredSegments = getStartupSegmentCount(session);
-  for (let index = 0; index < requiredSegments; index += 1) {
-    await generateVodSegment(session, `segment_${String(index).padStart(5, "0")}.ts`);
-  }
+  if (requiredSegments > 0) await generateVodSegmentBatch(session, 0, requiredSegments);
   writeSystemLog("info", "transcode-vod", "VOD startup buffer is ready.", { streamId: session.streamId, quality: session.quality, requiredSegments, targetBufferSeconds: session.targetBufferSeconds });
 }
 
@@ -134,55 +132,79 @@ function getStartupSegmentCount(session: VodSession): number {
 }
 
 async function generateVodSegment(session: VodSession, segmentName: string): Promise<void> {
-  const key = `${session.id}:${segmentName}`;
-  const existing = activeSegments.get(key);
+  const segmentIndex = parseSegmentIndex(segmentName);
+  return generateVodSegmentBatch(session, segmentIndex, getVodBatchSegmentCount(session));
+}
+
+async function generateVodSegmentBatch(session: VodSession, startIndex: number, requestedCount: number): Promise<void> {
+  const totalSegments = getSegmentCount(session);
+  if (startIndex < 0 || startIndex >= totalSegments) return;
+
+  const batchCount = Math.min(totalSegments - startIndex, Math.max(1, requestedCount));
+  const plannedIndices = Array.from({ length: batchCount }, (_, offset) => startIndex + offset);
+  const segmentKeys = plannedIndices.map((index) => `${session.id}:segment_${String(index).padStart(5, "0")}.ts`);
+  const existing = segmentKeys.map((key) => activeSegments.get(key)).find(Boolean);
   if (existing) return existing;
+
+  const missingIndices = plannedIndices.filter((index) => !existsSync(join(session.outputDir, `segment_${String(index).padStart(5, "0")}.ts`)));
+  if (missingIndices.length === 0) return;
+
   const previous = sessionQueues.get(session.id) ?? Promise.resolve();
   const promise = previous.catch(() => undefined).then(async () => {
-    const segmentPath = join(session.outputDir, segmentName);
-    if (existsSync(segmentPath)) return;
-    await runVodSegmentFfmpeg(session, segmentName);
-  }).finally(() => activeSegments.delete(key));
-  activeSegments.set(key, promise);
+    const refreshedMissing = plannedIndices.filter((index) => !existsSync(join(session.outputDir, `segment_${String(index).padStart(5, "0")}.ts`)));
+    if (refreshedMissing.length === 0) return;
+
+    const firstMissingIndex = refreshedMissing[0] ?? startIndex;
+    const lastPlannedIndex = plannedIndices.at(-1) ?? firstMissingIndex;
+    const segmentCount = lastPlannedIndex - firstMissingIndex + 1;
+    await runVodSegmentBatchFfmpeg(session, firstMissingIndex, segmentCount);
+  }).finally(() => {
+    for (const key of segmentKeys) activeSegments.delete(key);
+  });
+
+  for (const key of segmentKeys) activeSegments.set(key, promise);
   sessionQueues.set(session.id, promise.catch(() => undefined));
   return promise;
 }
 
 function prewarmVodSegments(session: VodSession, startIndex: number, count: number): void {
-  for (let index = startIndex; index < startIndex + count; index += 1) {
-    if (index < 0 || index >= getSegmentCount(session)) continue;
-    const segmentName = `segment_${String(index).padStart(5, "0")}.ts`;
-    const segmentPath = join(session.outputDir, segmentName);
-    if (existsSync(segmentPath)) continue;
-    generateVodSegment(session, segmentName).catch((error) => {
-      const message = error instanceof Error ? error.message : "VOD prewarm failed.";
-      session.error = message;
-      session.status = "failed";
-      session.updatedAt = new Date().toISOString();
-      writeSystemLog("warn", "transcode-vod", "VOD segment prewarm failed.", { streamId: session.streamId, quality: session.quality, segmentName, error: message });
-    });
-  }
+  if (startIndex < 0 || startIndex >= getSegmentCount(session)) return;
+  generateVodSegmentBatch(session, startIndex, count).catch((error) => {
+    const message = error instanceof Error ? error.message : "VOD prewarm failed.";
+    session.error = message;
+    session.status = "failed";
+    session.updatedAt = new Date().toISOString();
+    writeSystemLog("warn", "transcode-vod", "VOD segment prewarm failed.", { streamId: session.streamId, quality: session.quality, startIndex, count, error: message });
+  });
 }
 
-async function runVodSegmentFfmpeg(session: VodSession, segmentName: string): Promise<void> {
-  const segmentIndex = parseSegmentIndex(segmentName);
-  const startSeconds = segmentIndex * session.segmentSeconds;
-  const durationSeconds = Math.min(session.segmentSeconds, Math.max(0.1, session.durationSeconds - startSeconds));
-  const outputPath = join(session.outputDir, segmentName);
-  const tempOutputPath = `${outputPath}.tmp`;
+async function runVodSegmentBatchFfmpeg(session: VodSession, startSegmentIndex: number, segmentCount: number): Promise<void> {
+  const totalSegments = getSegmentCount(session);
+  const safeStartIndex = Math.max(0, Math.min(startSegmentIndex, totalSegments - 1));
+  const safeSegmentCount = Math.max(1, Math.min(segmentCount, totalSegments - safeStartIndex));
+  const startSeconds = safeStartIndex * session.segmentSeconds;
+  const durationSeconds = Math.min(session.segmentSeconds * safeSegmentCount, Math.max(0.1, session.durationSeconds - startSeconds));
+  const firstSegmentName = `segment_${String(safeStartIndex).padStart(5, "0")}.ts`;
+  const lastSegmentName = `segment_${String(safeStartIndex + safeSegmentCount - 1).padStart(5, "0")}.ts`;
+  const tempPlaylistPath = join(session.outputDir, `batch_${String(safeStartIndex).padStart(5, "0")}_${Date.now()}.m3u8`);
   const profile = getTranscodeProfile(session.quality, session.bufferPreset);
-  const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0", "-vf", buildVideoFilter(profile.width, profile.height), "-c:v", "libx264", "-preset", profile.preset, "-crf", String(profile.crf), "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "48", "-keyint_min", "48", "-sc_threshold", "0"];
+  const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0", "-vf", buildVideoFilter(profile.width, profile.height), "-c:v", "libx264", "-preset", profile.preset, "-crf", String(profile.crf), "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "48", "-keyint_min", "48", "-sc_threshold", "0", "-force_key_frames", `expr:gte(t,n_forced*${session.segmentSeconds})`];
   if (profile.videoBitrateKbps) args.push("-maxrate", `${profile.videoBitrateKbps}k`, "-bufsize", `${Math.round(profile.videoBitrateKbps * 2)}k`);
-  args.push("-c:a", "aac", "-b:a", `${profile.audioBitrateKbps}k`, "-ac", "2", "-f", "mpegts", "-y", tempOutputPath);
+  args.push("-c:a", "aac", "-b:a", `${profile.audioBitrateKbps}k`, "-ac", "2", "-f", "hls", "-hls_time", String(session.segmentSeconds), "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_type", "mpegts", "-start_number", String(safeStartIndex), "-hls_segment_filename", join(session.outputDir, "segment_%05d.ts"), "-y", tempPlaylistPath);
+
   session.status = "running";
-  session.activeSegment = segmentName;
+  session.activeSegment = safeSegmentCount === 1 ? firstSegmentName : `${firstSegmentName}..${lastSegmentName}`;
   session.updatedAt = new Date().toISOString();
-  await runProcess(env.FFMPEG_PATH, args, session);
-  await rename(tempOutputPath, outputPath);
-  session.status = activeSegments.size > 1 ? "running" : "exited";
+  try {
+    await runProcess(env.FFMPEG_PATH, args, session);
+    if (!existsSync(join(session.outputDir, firstSegmentName))) throw new Error(`FFmpeg did not generate expected VOD segment ${firstSegmentName}.`);
+  } finally {
+    await rm(tempPlaylistPath, { force: true }).catch(() => undefined);
+  }
+  session.status = "exited";
   session.activeSegment = undefined;
   session.updatedAt = new Date().toISOString();
-  writeSystemLog("info", "transcode-vod", "VOD segment generated.", { streamId: session.streamId, quality: session.quality, segmentName, startSeconds, durationSeconds, speed: session.progress?.speed, fps: session.progress?.fps });
+  writeSystemLog("info", "transcode-vod", "VOD segment batch generated.", { streamId: session.streamId, quality: session.quality, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, segmentCount: safeSegmentCount, speed: session.progress?.speed, fps: session.progress?.fps });
 }
 
 function parseVodProgress(session: VodSession, text: string): void {
@@ -220,6 +242,12 @@ function getTargetBufferSeconds(bufferPreset: BufferPreset): number {
   if (bufferPreset === "auto") return 20;
   const parsed = Number.parseInt(bufferPreset.replace(/s$/, ""), 10);
   return Number.isFinite(parsed) ? parsed : 20;
+}
+
+function getVodBatchSegmentCount(session: VodSession): number {
+  const targetSegments = Math.ceil(session.targetBufferSeconds / session.segmentSeconds);
+  const preferredSegments = Math.max(3, targetSegments);
+  return Math.min(getSegmentCount(session), Math.max(1, preferredSegments));
 }
 
 function countGeneratedSegments(session: VodSession): number {
