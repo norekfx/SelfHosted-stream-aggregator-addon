@@ -73,9 +73,9 @@ async function loadTranscodeMovieById() {
     };
 
     if (!candidate) {
-      if (candidateSelect) candidateSelect.innerHTML = '<option value="">Nie znaleziono działającego Original.</option>';
+      if (candidateSelect) candidateSelect.innerHTML = '<option value="">Nie znaleziono działającego Original ani linku HLS.</option>';
       setTranscodeStatus(`Nie znaleziono działającego streamu dla ${movieId}. Uruchom Test agregacji, żeby zobaczyć szczegóły walidacji.`, true);
-      showTranscodeDiagnosticToast("Nie znaleziono działającego Original.");
+      showTranscodeDiagnosticToast("Nie znaleziono działającego Original ani HLS.");
       return;
     }
 
@@ -84,7 +84,7 @@ async function loadTranscodeMovieById() {
       candidateSelect.value = candidate.id;
     }
     setTranscodeStatus(`Załadowano film ${movieId}. Możesz testować Original, Live HLS albo VOD HLS seek.`, false);
-    setTranscodeDetails({ media: `movie:${movieId}`, selected: candidate.title, availableModes: Object.keys(candidate.urls), streams: streams.map((stream) => ({ name: stream.name, title: stream.title, url: stream.url })) });
+    setTranscodeDetails({ media: `movie:${movieId}`, selected: candidate.title, availableModes: Object.keys(candidate.urls), streamId: candidate.id, streams: streams.map((stream) => ({ name: stream.name, title: stream.title, url: stream.url })) });
     await refreshDiagnosticTranscodeStatus();
     showTranscodeDiagnosticToast("Film załadowany do testów transkodowania.");
   } catch (error) {
@@ -100,23 +100,34 @@ async function loadTranscodeMovieById() {
 }
 
 function buildTranscodeCandidateFromStreams(movieId, streams) {
-  const original = streams.find((stream) => String(stream.name ?? "").toLowerCase() === "original") ?? streams.find((stream) => stream.url && !/\/transcode\//.test(stream.url));
+  const original = streams.find((stream) => String(stream.name ?? "").toLowerCase() === "original") ?? streams.find((stream) => stream.url && !/\/transcode(?:-vod)?\//.test(stream.url));
   const urls = {};
   if (original?.url) urls.original = original.url;
 
   for (const stream of streams) {
     const url = stream.url ?? "";
-    const match = url.match(/\/transcode\/([^/]+)\/([^/]+)\/master\.m3u8(?:$|[?#])/);
+    const match = url.match(/\/transcode(?:-vod)?\/([^/]+)\/([^/]+)\/master\.m3u8(?:$|[?#])/);
     if (!match) continue;
     const quality = decodeURIComponent(match[2] ?? "");
-    if (TRANSCODE_DIAGNOSTICS_MODES.includes(quality)) urls[quality] = url;
+    if (!TRANSCODE_DIAGNOSTICS_MODES.includes(quality)) continue;
+    const normalized = normalizeTranscodeDiagnosticUrl(url);
+    urls[quality] = normalized.live;
+    urls[`vod:${quality}`] = normalized.vod;
   }
 
-  if (!urls.original && !Object.keys(urls).length) return null;
-  const idFromUrl = Object.values(urls).find((url) => /\/transcode\//.test(url))?.match(/\/transcode\/([^/]+)\//)?.[1];
+  const hlsUrl = Object.values(urls).find((url) => /\/transcode(?:-vod)?\//.test(url));
+  if (!urls.original && !hlsUrl) return null;
+  const idFromUrl = hlsUrl?.match(/\/transcode(?:-vod)?\/([^/]+)\//)?.[1];
   const id = idFromUrl ? decodeURIComponent(idFromUrl) : movieId;
   const title = original?.title?.split("\n")?.[0] || streams[0]?.title || `movie:${movieId}`;
   return { id, title, urls, original, streams };
+}
+
+function normalizeTranscodeDiagnosticUrl(url) {
+  return {
+    live: url.replace("/transcode-vod/", "/transcode/"),
+    vod: url.replace("/transcode/", "/transcode-vod/")
+  };
 }
 
 function getSelectedTranscodeDiagnosticUrl() {
@@ -126,17 +137,13 @@ function getSelectedTranscodeDiagnosticUrl() {
   const playbackMode = document.getElementById("transcodePlaybackModeSelect")?.value ?? "live";
   if (!candidate) return undefined;
   if (mode === "original") return candidate.urls.original;
-  const liveUrl = candidate.urls[mode];
-  if (!liveUrl) return undefined;
-  return playbackMode === "vod" ? liveUrl.replace("/transcode/", "/transcode-vod/") : liveUrl;
+  return playbackMode === "vod" ? candidate.urls[`vod:${mode}`] ?? candidate.urls[mode]?.replace("/transcode/", "/transcode-vod/") : candidate.urls[mode] ?? candidate.urls[`vod:${mode}`]?.replace("/transcode-vod/", "/transcode/");
 }
 
 function playSelectedTranscodeDiagnostic(event) {
+  event?.preventDefault?.();
   const playbackMode = document.getElementById("transcodePlaybackModeSelect")?.value ?? "live";
   const mode = document.getElementById("transcodeModeSelect")?.value ?? "original";
-  if (playbackMode === "vod" && mode !== "original") return;
-
-  event?.preventDefault?.();
   const url = getSelectedTranscodeDiagnosticUrl();
   if (!url) {
     showTranscodeDiagnosticToast("Najpierw znajdź film i wybierz tryb transkodowania.");
@@ -146,10 +153,6 @@ function playSelectedTranscodeDiagnostic(event) {
 }
 
 async function copySelectedTranscodeDiagnosticUrl(event) {
-  const playbackMode = document.getElementById("transcodePlaybackModeSelect")?.value ?? "live";
-  const mode = document.getElementById("transcodeModeSelect")?.value ?? "original";
-  if (playbackMode === "vod" && mode !== "original") return;
-
   event?.preventDefault?.();
   const url = getSelectedTranscodeDiagnosticUrl();
   if (!url) {
@@ -175,11 +178,12 @@ function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
 
   const isHls = /\.m3u8(?:$|[?#])/.test(url);
   setTranscodeStatus(`Odtwarzam: ${mode} / ${playbackMode}${isHls ? " HLS" : ""}<br><code>${escapeDiagnosticHtml(url)}</code>`, false);
+  window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), currentPlaybackMode: playbackMode, currentMode: mode, currentUrl: url };
   refreshDiagnosticTranscodeStatus();
 
   if (isHls && window.Hls && Hls.isSupported()) {
     const hls = new Hls({ debug: false, lowLatencyMode: playbackMode === "live" });
-    window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), hls, currentPlaybackMode: playbackMode, currentMode: mode, currentUrl: url };
+    window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), hls };
     hls.on(Hls.Events.ERROR, (_, data) => {
       setTranscodeStatus(`HLS error: ${escapeDiagnosticHtml(data.type)} / ${escapeDiagnosticHtml(data.details)} / fatal=${escapeDiagnosticHtml(data.fatal)}`, true, true);
     });
@@ -187,7 +191,6 @@ function playTranscodeDiagnosticUrl(url, mode, playbackMode) {
     hls.attachMedia(video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
   } else {
-    window.transcodeDiagnostics = { ...(window.transcodeDiagnostics ?? {}), currentPlaybackMode: playbackMode, currentMode: mode, currentUrl: url };
     video.src = url;
     video.play().catch(() => {});
   }
@@ -223,8 +226,10 @@ async function refreshDiagnosticTranscodeStatus() {
 function findDiagnosticSession(sessions, candidateId, mode, playbackMode) {
   const normalizedMode = mode === "original" ? undefined : mode;
   const wantedVod = playbackMode === "vod";
+  const normalizedCandidate = decodeURIComponent(candidateId ?? "");
   const matching = sessions.filter((session) => {
-    if (candidateId && session.streamId !== candidateId) return false;
+    const sessionStreamId = decodeURIComponent(session.streamId ?? "");
+    if (normalizedCandidate && session.streamId !== candidateId && sessionStreamId !== normalizedCandidate) return false;
     if (normalizedMode && session.quality !== normalizedMode) return false;
     if (wantedVod && session.mode !== "vod") return false;
     if (!wantedVod && session.mode === "vod") return false;
@@ -246,6 +251,7 @@ function renderDiagnosticSession(session) {
       <div class="kv"><span>Segmenty</span><strong>${escapeDiagnosticHtml(buffer.generatedSegments ?? buffer.segmentCount ?? 0)} / ${escapeDiagnosticHtml(buffer.totalSegments ?? "-")} wygenerowane · ${escapeDiagnosticHtml(buffer.remainingSegments ?? "-")} zostało</strong></div>
       <div class="kv"><span>Bufor na dysku</span><strong>${escapeDiagnosticHtml(buffer.estimatedGeneratedSeconds ?? buffer.estimatedSeconds ?? 0)}s · segment ${escapeDiagnosticHtml(buffer.segmentSeconds ?? "-")}s · target ${escapeDiagnosticHtml(buffer.targetSeconds ?? "-")}s</strong></div>
       <div class="kv"><span>Paczki</span><strong>batch ${escapeDiagnosticHtml(buffer.batchSegmentCount ?? "-")} segmentów · prewarm ${escapeDiagnosticHtml(buffer.prewarmSegmentCount ?? "-")} segmentów · kolejka ${escapeDiagnosticHtml(session.queuedSegments ?? 0)}</strong></div>
+      <div class="kv"><span>Profil</span><strong>${escapeDiagnosticHtml((session.profile?.preset ?? activeBatch?.preset) ?? "-")} · CRF ${escapeDiagnosticHtml((session.profile?.crf ?? activeBatch?.crf) ?? "-")} · ${escapeDiagnosticHtml((session.profile?.videoBitrateKbps ?? activeBatch?.videoBitrateKbps) ?? "auto")} kbps</strong></div>
       <div class="kv"><span>Aktywna paczka</span><strong>${renderBatchLabel(activeBatch)}</strong></div>
       <div class="kv"><span>Ostatnia paczka</span><strong>${renderBatchLabel(lastBatch)}</strong></div>
       <div class="kv"><span>Zakresy na dysku</span><strong>${ranges.length ? ranges.map((range) => `${range.start}-${range.end}`).join(", ") : "-"}</strong></div>
