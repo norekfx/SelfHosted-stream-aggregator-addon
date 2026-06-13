@@ -53,9 +53,9 @@ export function getIntelQsvStatus(force = false): IntelQsvStatus {
       "-f",
       "lavfi",
       "-i",
-      "testsrc2=size=128x72:rate=1",
+      "testsrc2=size=1280x720:rate=25",
       "-frames:v",
-      "1",
+      "30",
       "-vf",
       "format=nv12",
       "-c:v",
@@ -63,7 +63,7 @@ export function getIntelQsvStatus(force = false): IntelQsvStatus {
       "-f",
       "null",
       "-"
-    ], 6_000);
+    ], 10_000);
     smokeTestOk = smoke.status === 0;
     if (!smokeTestOk) {
       reason = "FFmpeg ma h264_qsv, ale test kodowania QSV nie przeszedł. Sprawdź /dev/dri, sterowniki Intel i build FFmpeg.";
