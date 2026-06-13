@@ -5,7 +5,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { env, getTranscodeCacheDir } from "../config/env.js";
-import { getEffectiveMaxTranscodeSessions, getEffectiveTranscodeBufferPreset, getEffectiveTranscodeSettings } from "../settings/app-settings.js";
+import { getEffectiveMaxTranscodeSessions, getEffectiveTranscodeBufferPreset, getEffectiveTranscodeSettings, type VodTranscodeStrategy } from "../settings/app-settings.js";
 import type { BufferPreset, TranscodeQuality } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream } from "../streams/types.js";
@@ -21,7 +21,7 @@ const vodSegmentParamsSchema = vodParamsSchema.extend({ segment: z.string().rege
 type VodProgress = { frame?: number; fps?: number; bitrate?: string; outTime?: string; speed?: string; progress?: string };
 type VodStatus = "starting" | "running" | "exited" | "failed";
 type VodBatchSnapshot = { firstSegmentIndex: number; lastSegmentIndex: number; segmentCount: number; firstSegmentName: string; lastSegmentName: string; startSeconds: number; durationSeconds: number; startedAt: string; finishedAt?: string; speed?: string; fps?: number; preset?: string; crf?: number; videoBitrateKbps?: number; audioMode?: string; qsv?: { requestedMode: string; runtimeMode: string; active: boolean; fallbackToCpu: boolean; reason?: string; fallbackReason?: string } };
-type VodSession = { id: string; streamId: string; title?: string; sourceAddon?: string; sourceQuality?: string; quality: TranscodeQuality; bufferPreset: BufferPreset; originalUrl: string; durationSeconds: number; segmentSeconds: number; targetBufferSeconds: number; outputDir: string; playlistPath: string; createdAt: string; updatedAt: string; status: VodStatus; error?: string; lastLog?: string; activeSegment?: string; activeBatch?: VodBatchSnapshot; lastBatch?: VodBatchSnapshot; progress?: VodProgress; speedStats?: TranscodeSpeedStats; activeProcess?: ChildProcess; qsv?: VodBatchSnapshot["qsv"] };
+type VodSession = { id: string; streamId: string; title?: string; sourceAddon?: string; sourceQuality?: string; quality: TranscodeQuality; bufferPreset: BufferPreset; originalUrl: string; durationSeconds: number; segmentSeconds: number; targetBufferSeconds: number; strategy: VodTranscodeStrategy; outputDir: string; playlistPath: string; createdAt: string; updatedAt: string; status: VodStatus; error?: string; lastLog?: string; activeSegment?: string; activeBatch?: VodBatchSnapshot; lastBatch?: VodBatchSnapshot; progress?: VodProgress; speedStats?: TranscodeSpeedStats; activeProcess?: ChildProcess; qsv?: VodBatchSnapshot["qsv"] };
 
 const vodSessions = new Map<string, VodSession>();
 const activeSegments = new Map<string, Promise<void>>();
@@ -39,7 +39,7 @@ export function listVodTranscodeSessions(): Array<any> {
     return {
       ...snapshot,
       mode: "vod",
-      modeLabel: "VOD HLS seek",
+      modeLabel: session.strategy === "worker_v2" ? "VOD HLS worker v2" : session.strategy === "worker" ? "VOD HLS worker" : "VOD HLS batch",
       startedAt: session.createdAt,
       queuedSegments: queued,
       buffer: {
@@ -51,6 +51,7 @@ export function listVodTranscodeSessions(): Array<any> {
         estimatedGeneratedSeconds: segmentCount * session.segmentSeconds,
         segmentSeconds: session.segmentSeconds,
         targetSeconds: session.targetBufferSeconds,
+        strategy: session.strategy,
         progression: settings.vodBufferProgression,
         adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled,
         fixedBatchSegmentCount: settings.vodFixedBatchSegmentCount,
@@ -82,6 +83,7 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
       ensureVodBufferAhead(session, 0);
       reply.header("content-type", "application/vnd.apple.mpegurl");
       reply.header("cache-control", "no-store");
+      if (session.strategy === "worker_v2") return buildVodPlaylist(session);
       return createReadStream(session.playlistPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not prepare VOD playlist.";
@@ -121,7 +123,8 @@ export async function registerTranscodeVodRoutes(app: FastifyInstance): Promise<
 async function getOrCreateVodSession(streamId: string, quality: TranscodeQuality, bufferPreset: BufferPreset, original: AggregatedStream): Promise<VodSession> {
   const profile = getTranscodeProfile(quality, bufferPreset);
   const settings = getEffectiveTranscodeSettings();
-  const sessionId = Buffer.from(`${streamId}|${quality}|${bufferPreset}|vod|${settings.vodSegmentSeconds}|${settings.vodStartupBufferSeconds}|${settings.vodBufferProgression}|${settings.vodAdaptiveBatchEnabled}|${settings.vodFixedBatchSegmentCount}|${settings.vodQualityMode}|${settings.vodBitrateMode}|${settings.vodAudioMode}|${settings.vodIntelQsvMode}`).toString("base64url");
+  const strategy = settings.vodTranscodeStrategy;
+  const sessionId = Buffer.from(`${streamId}|${quality}|${bufferPreset}|vod|${strategy}|${settings.vodSegmentSeconds}|${settings.vodStartupBufferSeconds}|${settings.vodBufferProgression}|${settings.vodAdaptiveBatchEnabled}|${settings.vodFixedBatchSegmentCount}|${settings.vodQualityMode}|${settings.vodBitrateMode}|${settings.vodAudioMode}|${settings.vodIntelQsvMode}`).toString("base64url");
   const existing = vodSessions.get(sessionId);
   if (existing) return existing;
   const durationSeconds = await probeDurationSeconds(original.originalUrl ?? "");
@@ -129,13 +132,13 @@ async function getOrCreateVodSession(streamId: string, quality: TranscodeQuality
   mkdirSync(outputDir, { recursive: true });
   const now = new Date().toISOString();
   const qsvPlan = planIntelQsv(settings.vodIntelQsvMode);
-  const session: VodSession = { id: sessionId, streamId, title: original.title || original.name, sourceAddon: original.sourceAddon, sourceQuality: original.quality, quality, bufferPreset, originalUrl: original.originalUrl ?? "", durationSeconds, segmentSeconds: profile.hlsSegmentSeconds, targetBufferSeconds: settings.vodStartupBufferSeconds, outputDir, playlistPath: join(outputDir, "master.m3u8"), createdAt: now, updatedAt: now, status: "starting", speedStats: { samples: 0 }, qsv: qsvSnapshot(qsvPlan) };
-  await writeFile(session.playlistPath, buildVodPlaylist(session), "utf-8");
+  const session: VodSession = { id: sessionId, streamId, title: original.title || original.name, sourceAddon: original.sourceAddon, sourceQuality: original.quality, quality, bufferPreset, originalUrl: original.originalUrl ?? "", durationSeconds, segmentSeconds: profile.hlsSegmentSeconds, targetBufferSeconds: settings.vodStartupBufferSeconds, strategy, outputDir, playlistPath: join(outputDir, "master.m3u8"), createdAt: now, updatedAt: now, status: "starting", speedStats: { samples: 0 }, qsv: qsvSnapshot(qsvPlan) };
+  await writeVodPlaylist(session);
   session.status = "exited";
   session.updatedAt = new Date().toISOString();
   vodSessions.set(sessionId, session);
   writeSystemLog(qsvPlan.enabled ? "info" : qsvPlan.requestedMode === "disabled" ? "debug" : "warn", "transcode-vod", qsvPlan.enabled ? "VOD HLS will use Intel hardware encoding." : "VOD HLS will use CPU libx264.", { streamId, quality, requestedMode: qsvPlan.requestedMode, runtimeMode: qsvPlan.runtimeMode, reason: qsvPlan.reason, qsvStatus: qsvPlan.status });
-  writeSystemLog("info", "transcode-vod", "VOD playlist prepared.", { streamId, quality, durationSeconds, segmentSeconds: session.segmentSeconds, targetBufferSeconds: session.targetBufferSeconds, progression: settings.vodBufferProgression, adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled });
+  writeSystemLog("info", "transcode-vod", "VOD playlist prepared.", { streamId, quality, durationSeconds, segmentSeconds: session.segmentSeconds, targetBufferSeconds: session.targetBufferSeconds, strategy, progression: settings.vodBufferProgression, adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled });
   return session;
 }
 
@@ -143,7 +146,16 @@ function qsvSnapshot(plan: IntelQsvPlan): NonNullable<VodSession["qsv"]> {
   return { requestedMode: plan.requestedMode, runtimeMode: plan.runtimeMode, active: plan.enabled, fallbackToCpu: plan.fallbackToCpu, reason: plan.reason };
 }
 
+async function writeVodPlaylist(session: VodSession): Promise<void> {
+  await writeFile(session.playlistPath, buildVodPlaylist(session), "utf-8");
+}
+
 function buildVodPlaylist(session: VodSession): string {
+  if (session.strategy === "worker_v2") return buildVodEventPlaylist(session);
+  return buildVodFullPlaylist(session);
+}
+
+function buildVodFullPlaylist(session: VodSession): string {
   const segmentCount = Math.max(1, Math.ceil(session.durationSeconds / session.segmentSeconds));
   const lines = ["#EXTM3U", "#EXT-X-VERSION:3", `#EXT-X-TARGETDURATION:${Math.ceil(session.segmentSeconds)}`, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-MEDIA-SEQUENCE:0"];
   for (let index = 0; index < segmentCount; index += 1) {
@@ -152,6 +164,26 @@ function buildVodPlaylist(session: VodSession): string {
     lines.push(`#EXTINF:${duration.toFixed(3)},`, `segment_${String(index).padStart(5, "0")}.ts`);
   }
   lines.push("#EXT-X-ENDLIST", "");
+  return lines.join("\n");
+}
+
+function buildVodEventPlaylist(session: VodSession): string {
+  const ranges = getGeneratedSegmentRanges(getGeneratedSegmentIndexes(session));
+  const activeStart = session.activeBatch?.firstSegmentIndex;
+  const range = ranges.find((item) => activeStart !== undefined && activeStart >= item.start && activeStart <= item.end) ?? ranges[0];
+  const start = range?.start ?? 0;
+  const end = range?.end ?? Math.max(0, getStartupSegmentCount(session) - 1);
+  const totalSegments = getSegmentCount(session);
+  const lines = ["#EXTM3U", "#EXT-X-VERSION:3", `#EXT-X-TARGETDURATION:${Math.ceil(session.segmentSeconds)}`, "#EXT-X-PLAYLIST-TYPE:EVENT", "#EXT-X-INDEPENDENT-SEGMENTS", `#EXT-X-MEDIA-SEQUENCE:${start}`];
+  for (let index = start; index <= end; index += 1) {
+    const segmentName = `segment_${String(index).padStart(5, "0")}.ts`;
+    if (!existsSync(join(session.outputDir, segmentName))) continue;
+    const remaining = Math.max(0.1, session.durationSeconds - index * session.segmentSeconds);
+    const duration = Math.min(session.segmentSeconds, remaining);
+    lines.push(`#EXTINF:${duration.toFixed(3)},`, segmentName);
+  }
+  if (end >= totalSegments - 1) lines.push("#EXT-X-ENDLIST");
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -164,7 +196,8 @@ function prepareExclusiveVodTranscode(): void {
 async function ensureVodStartupBuffer(session: VodSession): Promise<void> {
   const requiredSegments = getStartupSegmentCount(session);
   if (requiredSegments > 0) await generateVodSegmentBatch(session, 0, requiredSegments);
-  writeSystemLog("info", "transcode-vod", "VOD startup buffer is ready.", { streamId: session.streamId, quality: session.quality, requiredSegments, targetBufferSeconds: session.targetBufferSeconds });
+  await writeVodPlaylist(session);
+  writeSystemLog("info", "transcode-vod", "VOD startup buffer is ready.", { streamId: session.streamId, quality: session.quality, requiredSegments, targetBufferSeconds: session.targetBufferSeconds, strategy: session.strategy });
 }
 
 function getStartupSegmentCount(session: VodSession): number {
@@ -173,7 +206,9 @@ function getStartupSegmentCount(session: VodSession): number {
 
 async function generateVodSegment(session: VodSession, segmentName: string): Promise<void> {
   const segmentIndex = parseSegmentIndex(segmentName);
-  return generateVodSegmentBatch(session, segmentIndex, getVodBatchSegmentCount(session));
+  if (session.strategy === "batch") return generateVodSegmentBatch(session, segmentIndex, getVodBatchSegmentCount(session));
+  prewarmVodSegments(session, segmentIndex, getWorkerSegmentCount(session, segmentIndex));
+  await waitForSegmentFile(session, segmentName, 30_000);
 }
 
 async function generateVodSegmentBatch(session: VodSession, startIndex: number, requestedCount: number): Promise<void> {
@@ -209,6 +244,11 @@ async function generateVodSegmentBatch(session: VodSession, startIndex: number, 
 
 function ensureVodBufferAhead(session: VodSession, currentIndex: number): void {
   const totalSegments = getSegmentCount(session);
+  if (session.strategy !== "batch") {
+    const firstMissingIndex = findFirstMissingSegmentIndex(session, currentIndex + 1, totalSegments - 1);
+    if (firstMissingIndex !== undefined) prewarmVodSegments(session, firstMissingIndex, getWorkerSegmentCount(session, firstMissingIndex));
+    return;
+  }
   const settings = getEffectiveTranscodeSettings();
   const desiredEndIndex = settings.vodBufferProgression === "infinite" ? totalSegments - 1 : Math.min(totalSegments - 1, currentIndex + getVodPrewarmSegmentCount(session));
   const firstMissingIndex = findFirstMissingSegmentIndex(session, currentIndex + 1, desiredEndIndex);
@@ -219,14 +259,19 @@ function ensureVodBufferAhead(session: VodSession, currentIndex: number): void {
 
 function prewarmVodSegments(session: VodSession, startIndex: number, count: number): void {
   if (startIndex < 0 || startIndex >= getSegmentCount(session)) return;
+  if (session.strategy !== "batch" && session.activeProcess && session.activeBatch && (startIndex < session.activeBatch.firstSegmentIndex || startIndex > session.activeBatch.lastSegmentIndex)) {
+    session.stopReason = "worker seek requested" as never;
+    session.activeProcess.kill("SIGTERM");
+  }
   generateVodSegmentBatch(session, startIndex, count).then(() => {
-    if (getEffectiveTranscodeSettings().vodBufferProgression === "infinite") ensureVodBufferAhead(session, startIndex + count - 1);
+    void writeVodPlaylist(session).catch(() => undefined);
+    if (session.strategy === "batch" && getEffectiveTranscodeSettings().vodBufferProgression === "infinite") ensureVodBufferAhead(session, startIndex + count - 1);
   }).catch((error) => {
     const message = error instanceof Error ? error.message : "VOD prewarm failed.";
     session.error = message;
     session.status = "failed";
     session.updatedAt = new Date().toISOString();
-    writeSystemLog("warn", "transcode-vod", "VOD segment prewarm failed.", { streamId: session.streamId, quality: session.quality, startIndex, count, error: message });
+    writeSystemLog("warn", "transcode-vod", "VOD segment prewarm failed.", { streamId: session.streamId, quality: session.quality, startIndex, count, strategy: session.strategy, error: message });
   });
 }
 
@@ -255,7 +300,9 @@ async function runVodSegmentBatchFfmpegAttempt(session: VodSession, startSegment
   const startedAt = new Date().toISOString();
   const profile = getVodRuntimeProfile(session);
   const runtimePlan = qsvPlan?.enabled ? qsvPlan : undefined;
-  const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", ...buildIntelQsvInputArgs(runtimePlan ?? planIntelQsv("disabled")), "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0", "-output_ts_offset", startSeconds.toFixed(3), "-vf", buildQsvAwareVideoFilter(profile, runtimePlan?.runtimeMode ?? "cpu"), ...buildVideoEncoderArgs(profile, runtimePlan ?? planIntelQsv("disabled"), session.segmentSeconds), "-force_key_frames", `expr:gte(t,n_forced*${session.segmentSeconds})`];
+  const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", ...buildIntelQsvInputArgs(runtimePlan ?? planIntelQsv("disabled")), "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0"];
+  if (session.strategy === "batch") args.push("-output_ts_offset", startSeconds.toFixed(3));
+  args.push("-vf", buildQsvAwareVideoFilter(profile, runtimePlan?.runtimeMode ?? "cpu"), ...buildVideoEncoderArgs(profile, runtimePlan ?? planIntelQsv("disabled"), session.segmentSeconds), "-force_key_frames", `expr:gte(t,n_forced*${session.segmentSeconds})`);
   pushVodAudioArgs(args, profile.audioBitrateKbps);
   args.push("-f", "hls", "-hls_time", String(session.segmentSeconds), "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_type", "mpegts", "-start_number", String(safeStartIndex), "-hls_segment_filename", join(session.outputDir, "segment_%05d.ts"), "-y", tempPlaylistPath);
 
@@ -276,19 +323,20 @@ async function runVodSegmentBatchFfmpegAttempt(session: VodSession, startSegment
   session.activeSegment = undefined;
   session.activeBatch = undefined;
   session.updatedAt = finishedAt;
-  writeSystemLog("info", "transcode-vod", "VOD segment batch generated.", { streamId: session.streamId, quality: session.quality, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, segmentCount: safeSegmentCount, preset: profile.preset, crf: profile.crf, videoBitrateKbps: profile.videoBitrateKbps, speed: session.progress?.speed, fps: session.progress?.fps, qsv: session.qsv });
+  await writeVodPlaylist(session).catch(() => undefined);
+  writeSystemLog("info", "transcode-vod", "VOD segment batch generated.", { streamId: session.streamId, quality: session.quality, firstSegmentName, lastSegmentName, startSeconds, durationSeconds, segmentCount: safeSegmentCount, strategy: session.strategy, preset: profile.preset, crf: profile.crf, videoBitrateKbps: profile.videoBitrateKbps, speed: session.progress?.speed, fps: session.progress?.fps, qsv: session.qsv });
 }
 
 function getVodRuntimeProfile(session: VodSession): TranscodeProfile {
   const settings = getEffectiveTranscodeSettings();
   const profile = { ...getTranscodeProfile(session.quality, session.bufferPreset) };
   const speed = session.speedStats?.average;
-  if (settings.vodQualityMode === "enabled") {
+  if (settings.vodQualityMode === "enabled" || session.strategy !== "batch") {
     profile.preset = "ultrafast";
     profile.crf = settings.vodCrf;
     if (settings.vodBitrateMode === "auto" && profile.videoBitrateKbps) profile.videoBitrateKbps = Math.max(250, Math.round(profile.videoBitrateKbps * 0.6));
   }
-  if (settings.vodQualityMode === "auto") applyVodAutoQualityLadder(profile, speed);
+  if (settings.vodQualityMode === "auto" && session.strategy === "batch") applyVodAutoQualityLadder(profile, speed);
   return profile;
 }
 
@@ -320,6 +368,7 @@ function parseVodProgress(session: VodSession, text: string): void {
   }
   session.progress = progress;
   session.updatedAt = new Date().toISOString();
+  if (session.strategy === "worker_v2") void writeVodPlaylist(session).catch(() => undefined);
 }
 
 function updateVodSpeedStats(session: VodSession, rawSpeed: string): void {
@@ -343,11 +392,16 @@ function getTargetBufferSeconds(bufferPreset: BufferPreset): number {
 }
 
 function getVodBatchSegmentCount(session: VodSession): number {
+  if (session.strategy !== "batch") return getWorkerSegmentCount(session, 0);
   const settings = getEffectiveTranscodeSettings();
   if (!settings.vodAdaptiveBatchEnabled) return Math.min(getSegmentCount(session), Math.max(1, settings.vodFixedBatchSegmentCount));
   const generatedSeconds = countGeneratedSegments(session) * session.segmentSeconds;
   const step = Math.max(1, Math.floor(generatedSeconds / 120));
   return Math.min(getSegmentCount(session), Math.max(2, step * 4));
+}
+
+function getWorkerSegmentCount(session: VodSession, startIndex: number): number {
+  return Math.max(1, getSegmentCount(session) - Math.max(0, startIndex));
 }
 
 function getVodPrewarmSegmentCount(session: VodSession): number {
@@ -396,6 +450,16 @@ function getSegmentCount(session: VodSession): number { return Math.max(1, Math.
 function parseSegmentIndex(segmentName: string): number { return Number.parseInt(segmentName.match(/\d{5}/)?.[0] ?? "0", 10); }
 function buildVideoFilter(width?: number, height?: number): string { const filters: string[] = []; if (width && height) filters.push(`scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2`); filters.push("format=yuv420p"); return filters.join(","); }
 function resolveBufferPreset(value?: string): BufferPreset { if (value && isBufferPreset(value)) return value; return getEffectiveTranscodeBufferPreset() as BufferPreset; }
+
+async function waitForSegmentFile(session: VodSession, segmentName: string, timeoutMs: number): Promise<void> {
+  const path = join(session.outputDir, segmentName);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (existsSync(path)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for VOD worker segment ${segmentName}.`);
+}
 
 async function probeDurationSeconds(url: string): Promise<number> {
   const output = await new Promise<string>((resolve, reject) => {
