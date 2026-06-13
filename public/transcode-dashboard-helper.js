@@ -66,7 +66,7 @@ function updateSystemTranscodeQsvRow(session) {
   const row = existing ?? document.createElement("div");
   row.id = "systemTranscodeQsvRow";
   row.className = "kv";
-  row.innerHTML = `<span>Intel QSV / enkoder</span><strong>${renderDashboardQsvText(qsv)}</strong>`;
+  row.innerHTML = `<span>Intel / enkoder</span><strong>${renderDashboardQsvText(qsv)}</strong>`;
   const kvList = status.querySelector(".kv-list") ?? status;
   if (!existing) kvList.appendChild(row);
 }
@@ -77,11 +77,12 @@ function resolveSessionQsv(session) {
 }
 
 function renderDashboardQsvText(qsv) {
-  if (!qsv) return "CPU libx264 / brak danych QSV";
+  if (!qsv) return "CPU libx264 / brak danych Intel";
   if (qsv.runtimeMode === "qsv_decode_encode" && qsv.active) return "Intel QSV aktywny · wejście + wyjście";
   if (qsv.runtimeMode === "qsv_encode" && qsv.active) return "Intel QSV aktywny · tylko wyjście";
+  if (qsv.runtimeMode === "vaapi_encode" && qsv.active) return `Intel VAAPI aktywny · h264_vaapi / i965${qsv.reason ? ` · ${escapeDashboardTranscodeHtml(qsv.reason)}` : ""}`;
   const reason = qsv.fallbackReason || qsv.reason;
-  return `CPU libx264${qsv.requestedMode && qsv.requestedMode !== "disabled" ? " · fallback z QSV" : ""}${reason ? ` · ${escapeDashboardTranscodeHtml(reason)}` : ""}`;
+  return `CPU libx264${qsv.requestedMode && qsv.requestedMode !== "disabled" ? " · fallback z Intel" : ""}${reason ? ` · ${escapeDashboardTranscodeHtml(reason)}` : ""}`;
 }
 
 function formatDashboardSpeed(value) {
