@@ -17,6 +17,7 @@ RUN npm prune --omit=dev
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+ENV LIBVA_DRIVER_NAME=i965
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ffmpeg \
