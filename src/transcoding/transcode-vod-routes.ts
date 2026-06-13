@@ -134,7 +134,7 @@ async function getOrCreateVodSession(streamId: string, quality: TranscodeQuality
   session.status = "exited";
   session.updatedAt = new Date().toISOString();
   vodSessions.set(sessionId, session);
-  writeSystemLog(qsvPlan.enabled ? "info" : qsvPlan.requestedMode === "disabled" ? "debug" : "warn", "transcode-vod", qsvPlan.enabled ? "VOD HLS will use Intel QSV." : "VOD HLS will use CPU libx264.", { streamId, quality, requestedMode: qsvPlan.requestedMode, runtimeMode: qsvPlan.runtimeMode, reason: qsvPlan.reason, qsvStatus: qsvPlan.status });
+  writeSystemLog(qsvPlan.enabled ? "info" : qsvPlan.requestedMode === "disabled" ? "debug" : "warn", "transcode-vod", qsvPlan.enabled ? "VOD HLS will use Intel hardware encoding." : "VOD HLS will use CPU libx264.", { streamId, quality, requestedMode: qsvPlan.requestedMode, runtimeMode: qsvPlan.runtimeMode, reason: qsvPlan.reason, qsvStatus: qsvPlan.status });
   writeSystemLog("info", "transcode-vod", "VOD playlist prepared.", { streamId, quality, durationSeconds, segmentSeconds: session.segmentSeconds, targetBufferSeconds: session.targetBufferSeconds, progression: settings.vodBufferProgression, adaptiveBatchEnabled: settings.vodAdaptiveBatchEnabled });
   return session;
 }
@@ -145,11 +145,10 @@ function qsvSnapshot(plan: IntelQsvPlan): NonNullable<VodSession["qsv"]> {
 
 function buildVodPlaylist(session: VodSession): string {
   const segmentCount = Math.max(1, Math.ceil(session.durationSeconds / session.segmentSeconds));
-  const lines = ["#EXTM3U", "#EXT-X-VERSION:3", `#EXT-X-TARGETDURATION:${Math.ceil(session.segmentSeconds)}`, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-MEDIA-SEQUENCE:0"];
+  const lines = ["#EXTM3U", "#EXT-X-VERSION:3", `#EXT-X-TARGETDURATION:${Math.ceil(session.segmentSeconds)}`, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-MEDIA-SEQUENCE:0"];
   for (let index = 0; index < segmentCount; index += 1) {
     const remaining = Math.max(0.1, session.durationSeconds - index * session.segmentSeconds);
     const duration = Math.min(session.segmentSeconds, remaining);
-    if (index > 0) lines.push("#EXT-X-DISCONTINUITY");
     lines.push(`#EXTINF:${duration.toFixed(3)},`, `segment_${String(index).padStart(5, "0")}.ts`);
   }
   lines.push("#EXT-X-ENDLIST", "");
@@ -239,7 +238,7 @@ async function runVodSegmentBatchFfmpeg(session: VodSession, startSegmentIndex: 
     if (!qsvPlan.enabled) throw error;
     const message = error instanceof Error ? error.message : String(error);
     session.qsv = { ...(session.qsv ?? qsvSnapshot(qsvPlan)), active: false, runtimeMode: "cpu", fallbackToCpu: true, fallbackReason: message };
-    writeSystemLog("warn", "transcode-vod", "Intel QSV failed for VOD HLS; retrying batch with CPU libx264.", { streamId: session.streamId, quality: session.quality, startSegmentIndex, segmentCount, error: message });
+    writeSystemLog("warn", "transcode-vod", "Intel hardware encoding failed for VOD HLS; retrying batch with CPU libx264.", { streamId: session.streamId, quality: session.quality, startSegmentIndex, segmentCount, error: message });
     await runVodSegmentBatchFfmpegAttempt(session, startSegmentIndex, segmentCount, undefined);
   }
 }
@@ -256,7 +255,7 @@ async function runVodSegmentBatchFfmpegAttempt(session: VodSession, startSegment
   const startedAt = new Date().toISOString();
   const profile = getVodRuntimeProfile(session);
   const runtimePlan = qsvPlan?.enabled ? qsvPlan : undefined;
-  const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", ...buildIntelQsvInputArgs(runtimePlan ?? planIntelQsv("disabled")), "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0", "-vf", buildQsvAwareVideoFilter(profile, runtimePlan?.runtimeMode ?? "cpu"), ...buildVideoEncoderArgs(profile, runtimePlan ?? planIntelQsv("disabled"), session.segmentSeconds), "-force_key_frames", `expr:gte(t,n_forced*${session.segmentSeconds})`];
+  const args = ["-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-fflags", "+genpts", "-ss", String(startSeconds), "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", ...buildIntelQsvInputArgs(runtimePlan ?? planIntelQsv("disabled")), "-i", session.originalUrl, "-t", String(durationSeconds), "-map", "0:v:0", "-map", "0:a:0?", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero", "-muxdelay", "0", "-muxpreload", "0", "-output_ts_offset", startSeconds.toFixed(3), "-vf", buildQsvAwareVideoFilter(profile, runtimePlan?.runtimeMode ?? "cpu"), ...buildVideoEncoderArgs(profile, runtimePlan ?? planIntelQsv("disabled"), session.segmentSeconds), "-force_key_frames", `expr:gte(t,n_forced*${session.segmentSeconds})`];
   pushVodAudioArgs(args, profile.audioBitrateKbps);
   args.push("-f", "hls", "-hls_time", String(session.segmentSeconds), "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_type", "mpegts", "-start_number", String(safeStartIndex), "-hls_segment_filename", join(session.outputDir, "segment_%05d.ts"), "-y", tempPlaylistPath);
 
@@ -396,7 +395,28 @@ function countGeneratedSegments(session: VodSession): number { return getGenerat
 function getSegmentCount(session: VodSession): number { return Math.max(1, Math.ceil(session.durationSeconds / session.segmentSeconds)); }
 function parseSegmentIndex(segmentName: string): number { return Number.parseInt(segmentName.match(/\d{5}/)?.[0] ?? "0", 10); }
 function buildVideoFilter(width?: number, height?: number): string { const filters: string[] = []; if (width && height) filters.push(`scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2`); filters.push("format=yuv420p"); return filters.join(","); }
-async function probeDurationSeconds(originalUrl: string): Promise<number> { const ffprobePath = env.FFMPEG_PATH.endsWith("ffmpeg") ? env.FFMPEG_PATH.replace(/ffmpeg$/, "ffprobe") : "ffprobe"; const output = await execFileText(ffprobePath, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", originalUrl], 30000); const duration = Number.parseFloat(output.trim()); if (!Number.isFinite(duration) || duration <= 0) throw new Error("Could not read source duration with ffprobe."); return duration; }
-function execFileText(command: string, args: string[], timeoutMs: number): Promise<string> { return new Promise((resolve, reject) => { execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => { if (error) reject(new Error(stderr?.toString() || error.message)); else resolve(stdout.toString()); }); }); }
-function runProcess(command: string, args: string[], session: VodSession): Promise<void> { return new Promise((resolve, reject) => { const child = spawn(command, args, { stdio: "pipe" }); let stderr = ""; session.activeProcess = child; child.stderr.on("data", (chunk) => { const text = chunk.toString(); stderr += text; stderr = stderr.slice(-4000); parseVodProgress(session, text); }); child.on("error", reject); child.on("exit", (code, signal) => { session.activeProcess = undefined; if (code === 0) resolve(); else reject(new Error(stderr || `Process exited with code ${code}${signal ? `, signal ${signal}` : ""}.`)); }); }); }
-function resolveBufferPreset(value: string | undefined): BufferPreset { const requested = value ?? ""; if (isBufferPreset(requested)) return requested; const setting = getEffectiveTranscodeBufferPreset(); return isBufferPreset(setting) ? setting : "auto"; }
+function resolveBufferPreset(value?: string): BufferPreset { return value && isBufferPreset(value) ? value : getEffectiveTranscodeBufferPreset(); }
+
+async function probeDurationSeconds(url: string): Promise<number> {
+  const output = await new Promise<string>((resolve, reject) => {
+    execFile(env.FFMPEG_PATH.replace(/ffmpeg$/, "ffprobe"), ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", url], { timeout: 20_000, maxBuffer: 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout));
+  });
+  const value = Number.parseFloat(output.trim());
+  if (!Number.isFinite(value) || value <= 0) throw new Error("Could not determine VOD duration.");
+  return value;
+}
+
+async function runProcess(command: string, args: string[], session: VodSession): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LIBVA_DRIVER_NAME: process.env.LIBVA_DRIVER_NAME ?? "i965" } });
+    session.activeProcess = child;
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); parseVodProgress(session, stderr); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      session.activeProcess = undefined;
+      if (code === 0) resolve();
+      else reject(new Error(stderr.slice(-4000) || `FFmpeg exited with code ${code}`));
+    });
+  });
+}
