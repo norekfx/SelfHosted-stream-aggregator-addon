@@ -12,6 +12,7 @@ export type VodBufferProgression = "target" | "infinite";
 export type VodQualityMode = "disabled" | "enabled" | "auto";
 export type VodBitrateMode = "auto" | "250" | "500" | "800" | "1200" | "1800" | "2500" | "3500" | "5000" | "8000" | "12000" | "18000";
 export type VodAudioMode = "aac" | "copy" | "disabled";
+export type IntelQsvMode = "disabled" | "encode" | "decode_encode";
 
 export type AppSettings = {
   preferredAudioLanguage: string;
@@ -49,6 +50,8 @@ export type AppSettings = {
   transcodeBitrateMinKbps: number;
   transcodeBitrateMaxKbps: number;
   transcodeMode: TranscodeMode;
+  liveIntelQsvMode: IntelQsvMode;
+  vodIntelQsvMode: IntelQsvMode;
   vodSegmentSeconds: number;
   vodStartupBufferSeconds: number;
   vodBufferProgression: VodBufferProgression;
@@ -64,6 +67,7 @@ const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language
 export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "4k"] as const;
 export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
 export const TRANSCODE_MODES = ["vod", "live"] as const;
+export const INTEL_QSV_MODES = ["disabled", "encode", "decode_encode"] as const;
 export const VOD_BUFFER_PROGRESSION_MODES = ["target", "infinite"] as const;
 export const VOD_QUALITY_MODES = ["disabled", "enabled", "auto"] as const;
 export const VOD_BITRATE_MODES = ["auto", "250", "500", "800", "1200", "1800", "2500", "3500", "5000", "8000", "12000", "18000"] as const;
@@ -110,6 +114,8 @@ const defaults: AppSettings = {
   transcodeBitrateMinKbps: 1000,
   transcodeBitrateMaxKbps: 6000,
   transcodeMode: "vod",
+  liveIntelQsvMode: "disabled",
+  vodIntelQsvMode: "disabled",
   vodSegmentSeconds: 10,
   vodStartupBufferSeconds: 20,
   vodBufferProgression: "infinite",
@@ -267,6 +273,8 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
 
   if (!TRANSCODE_PRESETS.includes(normalized.transcodePreset as never)) normalized.transcodePreset = defaults.transcodePreset;
   if (!TRANSCODE_MODES.includes(normalized.transcodeMode as never)) normalized.transcodeMode = defaults.transcodeMode;
+  if (!INTEL_QSV_MODES.includes(normalized.liveIntelQsvMode as IntelQsvMode)) normalized.liveIntelQsvMode = defaults.liveIntelQsvMode;
+  if (!INTEL_QSV_MODES.includes(normalized.vodIntelQsvMode as IntelQsvMode)) normalized.vodIntelQsvMode = defaults.vodIntelQsvMode;
   if (!VOD_BUFFER_PROGRESSION_MODES.includes(normalized.vodBufferProgression as never)) normalized.vodBufferProgression = defaults.vodBufferProgression;
   if (!VOD_QUALITY_MODES.includes(normalized.vodQualityMode as never)) normalized.vodQualityMode = defaults.vodQualityMode;
   if (!VOD_BITRATE_MODES.includes(normalized.vodBitrateMode as never)) normalized.vodBitrateMode = defaults.vodBitrateMode;
