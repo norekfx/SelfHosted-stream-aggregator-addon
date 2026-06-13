@@ -1,5 +1,7 @@
 const VOD_SETTING_FIELDS = [
   "transcodeMode",
+  "liveIntelQsvMode",
+  "vodIntelQsvMode",
   "vodSegmentSeconds",
   "vodStartupBufferSeconds",
   "vodBufferProgression",
@@ -53,10 +55,16 @@ function installVodTranscodeSettingsUi() {
   const liveBlock = document.getElementById("liveTranscodeSettingsBlock");
   const liveLabels = ["defaultTranscodeBufferPreset", "autoTranscodeMinQuality", "autoTranscodeMaxQuality", "transcodePreset", "transcodeCrfMode", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMode", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps"].map((id) => document.getElementById(id)?.closest("label")).filter(Boolean);
   for (const label of liveLabels) liveBlock?.appendChild(label);
+  liveBlock?.insertAdjacentHTML("beforeend", `
+    <label>Intel Quick Sync Video<select id="liveIntelQsvMode"><option value="disabled">Wyłączone / CPU libx264</option><option value="encode">QSV tylko wyjście H.264</option><option value="decode_encode">QSV wejście + wyjście H.264</option></select></label>
+    <div id="liveIntelQsvStatus" class="list empty">Intel QSV nie sprawdzony.</div>
+  `);
 
   form.insertAdjacentHTML("beforeend", `
     <div id="vodTranscodeSettingsBlock" style="display:contents">
       <p class="hint">Poniższe ustawienia dotyczą tylko VOD HLS. Linki transkodowane w streamach będą domyślnie używać VOD HLS.</p>
+      <label>Intel Quick Sync Video<select id="vodIntelQsvMode"><option value="disabled">Wyłączone / CPU libx264</option><option value="encode">QSV tylko wyjście H.264</option><option value="decode_encode">QSV wejście + wyjście H.264</option></select></label>
+      <div id="vodIntelQsvStatus" class="list empty">Intel QSV nie sprawdzony.</div>
       <label>Długość segmentów<select id="vodSegmentSeconds"><option value="4">4 sek</option><option value="6">6 sek</option><option value="8">8 sek</option><option value="10">10 sek</option><option value="12">12 sek</option><option value="15">15 sek</option><option value="20">20 sek</option></select></label>
       <label>Bufor startowy<input id="vodStartupBufferSeconds" type="number" min="1" max="600" step="1" value="20" /></label>
       <label>Progresja buforu<select id="vodBufferProgression"><option value="target">Bufor ustawiony powyżej</option><option value="infinite">Nieskończony / do końca filmu</option></select></label>
@@ -69,13 +77,14 @@ function installVodTranscodeSettingsUi() {
     </div>
   `);
 
-  for (const id of ["transcodeMode", "vodAdaptiveBatchEnabled", "vodQualityMode"]) document.getElementById(id)?.addEventListener("change", updateVodSettingsVisibility);
+  for (const id of ["transcodeMode", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode"]) document.getElementById(id)?.addEventListener("change", () => { updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
   vodSettingsFetch("/admin/settings").then((response) => response.json()).then((data) => fillVodTranscodeSettings(data.settings ?? {})).catch(() => {});
+  refreshIntelQsvStatus();
   updateVodSettingsVisibility();
 }
 
 function fillVodTranscodeSettings(settings) {
-  const defaults = { transcodeMode: "vod", vodSegmentSeconds: 10, vodStartupBufferSeconds: 20, vodBufferProgression: "infinite", vodAdaptiveBatchEnabled: true, vodFixedBatchSegmentCount: 2, vodQualityMode: "auto", vodCrf: 26, vodBitrateMode: "auto", vodAudioMode: "aac" };
+  const defaults = { transcodeMode: "vod", liveIntelQsvMode: "disabled", vodIntelQsvMode: "disabled", vodSegmentSeconds: 10, vodStartupBufferSeconds: 20, vodBufferProgression: "infinite", vodAdaptiveBatchEnabled: true, vodFixedBatchSegmentCount: 2, vodQualityMode: "auto", vodCrf: 26, vodBitrateMode: "auto", vodAudioMode: "aac" };
   for (const field of VOD_SETTING_FIELDS) {
     const element = document.getElementById(field);
     if (!element) continue;
@@ -83,6 +92,7 @@ function fillVodTranscodeSettings(settings) {
     element.value = VOD_BOOLEAN_FIELDS.has(field) ? String(value === true) : String(value);
   }
   updateVodSettingsVisibility();
+  refreshIntelQsvStatus();
 }
 
 function updateVodSettingsVisibility() {
@@ -99,6 +109,36 @@ function updateVodSettingsVisibility() {
   if (batchLabel) batchLabel.style.display = mode === "vod" && !adaptive ? "" : "none";
   if (crfLabel) crfLabel.style.display = mode === "vod" && qualityMode === "enabled" ? "" : "none";
   if (bitrateLabel) bitrateLabel.style.display = mode === "vod" && qualityMode !== "auto" ? "" : "none";
+}
+
+async function refreshIntelQsvStatus() {
+  const liveStatus = document.getElementById("liveIntelQsvStatus");
+  const vodStatus = document.getElementById("vodIntelQsvStatus");
+  if (!liveStatus && !vodStatus) return;
+  try {
+    const response = await vodSettingsFetch("/admin/transcode/qsv/status");
+    const data = await response.json();
+    const status = data.status ?? {};
+    const label = renderIntelQsvStatus(status);
+    if (liveStatus) liveStatus.innerHTML = label;
+    if (vodStatus) vodStatus.innerHTML = label;
+  } catch (error) {
+    const label = `<span class="badge warn">QSV status: błąd sprawdzania</span><br><small>${escapeVodQsvHtml(error?.message ?? error)}</small>`;
+    if (liveStatus) liveStatus.innerHTML = label;
+    if (vodStatus) vodStatus.innerHTML = label;
+  }
+}
+
+function renderIntelQsvStatus(status) {
+  const ok = status.enabled === true;
+  const badge = ok ? "online" : "warn";
+  const text = ok ? "Intel QSV działa" : "Intel QSV niedostępny — fallback CPU";
+  const mode = [status.encoderAvailable ? "h264_qsv encoder OK" : "brak h264_qsv encoder", status.decoderAvailable ? "decoder h264_qsv OK" : "brak/niepewny decoder h264_qsv", status.smokeTestOk ? "test kodowania OK" : "test kodowania nie przeszedł"].join(" · ");
+  return `<span class="badge ${badge}">${text}</span><br><small>${escapeVodQsvHtml(mode)}</small>${status.reason ? `<br><small>${escapeVodQsvHtml(status.reason)}</small>` : ""}`;
+}
+
+function escapeVodQsvHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 }
 
 installVodTranscodeSettingsUi();
