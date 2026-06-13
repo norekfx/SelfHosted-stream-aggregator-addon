@@ -117,10 +117,10 @@ const defaults: AppSettings = {
   liveIntelQsvMode: "disabled",
   vodIntelQsvMode: "disabled",
   vodSegmentSeconds: 10,
-  vodStartupBufferSeconds: 20,
+  vodStartupBufferSeconds: 60,
   vodBufferProgression: "infinite",
-  vodAdaptiveBatchEnabled: true,
-  vodFixedBatchSegmentCount: 2,
+  vodAdaptiveBatchEnabled: false,
+  vodFixedBatchSegmentCount: 12,
   vodQualityMode: "auto",
   vodCrf: 26,
   vodBitrateMode: "auto",
@@ -221,90 +221,28 @@ export function getEffectiveTranscodeMode(): TranscodeMode {
   return getAppSettings().transcodeMode;
 }
 
-export function getMetadataSyncTtlMs(): number {
-  const minutes = getAppSettings().metadataSyncIntervalMinutes;
-  return minutes <= 0 ? 0 : minutes * 60 * 1000;
-}
-
-export function getKometaAnimeIdsRefreshTtlMs(): number {
-  const interval = getAppSettings().docchiKometaAnimeIdsRefreshInterval;
-  if (interval === "once") return Number.POSITIVE_INFINITY;
-  if (interval === "weekly") return 7 * 24 * 60 * 60 * 1000;
-  if (interval === "biweekly") return 14 * 24 * 60 * 60 * 1000;
-  if (interval === "monthly") return 30 * 24 * 60 * 60 * 1000;
-  return 24 * 60 * 60 * 1000;
+function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
+  const normalized = { ...settings };
+  if (!TRANSCODE_MODES.includes(normalized.transcodeMode)) normalized.transcodeMode = defaults.transcodeMode;
+  if (!INTEL_QSV_MODES.includes(normalized.liveIntelQsvMode)) normalized.liveIntelQsvMode = defaults.liveIntelQsvMode;
+  if (!INTEL_QSV_MODES.includes(normalized.vodIntelQsvMode)) normalized.vodIntelQsvMode = defaults.vodIntelQsvMode;
+  normalized.vodSegmentSeconds = clampInt(normalized.vodSegmentSeconds, 2, 30, defaults.vodSegmentSeconds);
+  normalized.vodStartupBufferSeconds = clampInt(normalized.vodStartupBufferSeconds, 1, 600, defaults.vodStartupBufferSeconds);
+  if (!VOD_BUFFER_PROGRESSION_MODES.includes(normalized.vodBufferProgression)) normalized.vodBufferProgression = defaults.vodBufferProgression;
+  normalized.vodAdaptiveBatchEnabled = Boolean(normalized.vodAdaptiveBatchEnabled);
+  normalized.vodFixedBatchSegmentCount = clampInt(normalized.vodFixedBatchSegmentCount, 1, 100, defaults.vodFixedBatchSegmentCount);
+  if (!VOD_QUALITY_MODES.includes(normalized.vodQualityMode)) normalized.vodQualityMode = defaults.vodQualityMode;
+  normalized.vodCrf = clampInt(normalized.vodCrf, 16, 35, defaults.vodCrf);
+  if (!VOD_BITRATE_MODES.includes(normalized.vodBitrateMode)) normalized.vodBitrateMode = defaults.vodBitrateMode;
+  if (!VOD_AUDIO_MODES.includes(normalized.vodAudioMode)) normalized.vodAudioMode = defaults.vodAudioMode;
+  return normalized;
 }
 
 function normalizeLanguageCode(value: string): string {
   const normalized = value.trim().toLowerCase();
-  if (!normalized) return DEFAULT_PREFERRED_LANGUAGE;
-  if (normalized === "sq") return DEFAULT_PREFERRED_LANGUAGE;
   return validLanguageCodes.has(normalized) ? normalized : DEFAULT_PREFERRED_LANGUAGE;
 }
 
-function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
-  const normalized = { ...settings };
-  normalized.preferDebrid = normalized.preferDebrid !== false;
-  normalized.detectDebridPlaceholders = normalized.detectDebridPlaceholders === true;
-  normalized.debridPlaceholderCompareDeclaredSize = normalized.debridPlaceholderCompareDeclaredSize === true;
-  normalized.docchiKometaAnimeIdsEnabled = normalized.docchiKometaAnimeIdsEnabled === true;
-  normalized.docchiKometaAnimeIdsRefreshInterval = DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS.includes(normalized.docchiKometaAnimeIdsRefreshInterval as DocchiKometaAnimeIdsRefreshInterval) ? normalized.docchiKometaAnimeIdsRefreshInterval : defaults.docchiKometaAnimeIdsRefreshInterval;
-  normalized.docchiStreamForceMode = DOCCHI_STREAM_FORCE_MODES.includes(normalized.docchiStreamForceMode as DocchiStreamForceMode) ? normalized.docchiStreamForceMode : defaults.docchiStreamForceMode;
-  normalized.tmdbApiKey = normalized.tmdbApiKey?.trim() || undefined;
-  normalized.tmdbReadAccessToken = normalized.tmdbReadAccessToken?.trim() || undefined;
-  normalized.tmdbLanguage = normalized.tmdbLanguage?.trim() || defaults.tmdbLanguage;
-  normalized.tmdbRegion = normalized.tmdbRegion?.trim().toUpperCase() || defaults.tmdbRegion;
-  normalized.metadataSyncIntervalMinutes = normalizeSyncInterval(normalized.metadataSyncIntervalMinutes);
-  normalized.docchiPublicMappingMode = DOCCHI_PUBLIC_MAPPING_MODES.includes(normalized.docchiPublicMappingMode as DocchiPublicMappingMode) ? normalized.docchiPublicMappingMode : defaults.docchiPublicMappingMode;
-  normalized.debridPlaceholderMinSizeMb = clampNumber(normalized.debridPlaceholderMinSizeMb, 1, 102400, defaults.debridPlaceholderMinSizeMb);
-  normalized.debridPlaceholderMinDurationMinutes = clampNumber(normalized.debridPlaceholderMinDurationMinutes, 1, 1440, defaults.debridPlaceholderMinDurationMinutes);
-  normalized.debridPlaceholderSizeDifferenceGb = clampNumber(normalized.debridPlaceholderSizeDifferenceGb, 1, 1024, defaults.debridPlaceholderSizeDifferenceGb);
-
-  if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMinQuality as never)) normalized.autoTranscodeMinQuality = defaults.autoTranscodeMinQuality;
-  if (!TRANSCODE_QUALITY_ORDER.includes(normalized.autoTranscodeMaxQuality as never)) normalized.autoTranscodeMaxQuality = defaults.autoTranscodeMaxQuality;
-  if (!LINK_VALIDATION_MODES.includes(normalized.linkValidationMode as never)) normalized.linkValidationMode = defaults.linkValidationMode;
-  if (!LINK_VALIDATION_MODES.includes(normalized.debridPlaceholderValidationMode as never)) normalized.debridPlaceholderValidationMode = defaults.debridPlaceholderValidationMode;
-
-  const minIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMinQuality as never);
-  const maxIndex = TRANSCODE_QUALITY_ORDER.indexOf(normalized.autoTranscodeMaxQuality as never);
-  if (minIndex > maxIndex) {
-    normalized.autoTranscodeMinQuality = normalized.autoTranscodeMaxQuality;
-  }
-
-  if (!TRANSCODE_PRESETS.includes(normalized.transcodePreset as never)) normalized.transcodePreset = defaults.transcodePreset;
-  if (!TRANSCODE_MODES.includes(normalized.transcodeMode as never)) normalized.transcodeMode = defaults.transcodeMode;
-  if (!INTEL_QSV_MODES.includes(normalized.liveIntelQsvMode as IntelQsvMode)) normalized.liveIntelQsvMode = defaults.liveIntelQsvMode;
-  if (!INTEL_QSV_MODES.includes(normalized.vodIntelQsvMode as IntelQsvMode)) normalized.vodIntelQsvMode = defaults.vodIntelQsvMode;
-  if (!VOD_BUFFER_PROGRESSION_MODES.includes(normalized.vodBufferProgression as never)) normalized.vodBufferProgression = defaults.vodBufferProgression;
-  if (!VOD_QUALITY_MODES.includes(normalized.vodQualityMode as never)) normalized.vodQualityMode = defaults.vodQualityMode;
-  if (!VOD_BITRATE_MODES.includes(normalized.vodBitrateMode as never)) normalized.vodBitrateMode = defaults.vodBitrateMode;
-  if (!VOD_AUDIO_MODES.includes(normalized.vodAudioMode as never)) normalized.vodAudioMode = defaults.vodAudioMode;
-  if (!["auto", "range"].includes(normalized.transcodeCrfMode)) normalized.transcodeCrfMode = "auto";
-  if (!["auto", "range"].includes(normalized.transcodeBitrateMode)) normalized.transcodeBitrateMode = "auto";
-
-  normalized.transcodeCrfMin = clampNumber(normalized.transcodeCrfMin, 16, 35, defaults.transcodeCrfMin);
-  normalized.transcodeCrfMax = clampNumber(normalized.transcodeCrfMax, 16, 35, defaults.transcodeCrfMax);
-  if (normalized.transcodeCrfMin > normalized.transcodeCrfMax) normalized.transcodeCrfMin = normalized.transcodeCrfMax;
-
-  normalized.transcodeBitrateMinKbps = clampNumber(normalized.transcodeBitrateMinKbps, 150, 50000, defaults.transcodeBitrateMinKbps);
-  normalized.transcodeBitrateMaxKbps = clampNumber(normalized.transcodeBitrateMaxKbps, 150, 50000, defaults.transcodeBitrateMaxKbps);
-  if (normalized.transcodeBitrateMinKbps > normalized.transcodeBitrateMaxKbps) normalized.transcodeBitrateMinKbps = normalized.transcodeBitrateMaxKbps;
-
-  normalized.vodSegmentSeconds = clampNumber(normalized.vodSegmentSeconds, 2, 30, defaults.vodSegmentSeconds);
-  normalized.vodStartupBufferSeconds = clampNumber(normalized.vodStartupBufferSeconds, 1, 600, defaults.vodStartupBufferSeconds);
-  normalized.vodAdaptiveBatchEnabled = normalized.vodAdaptiveBatchEnabled !== false;
-  normalized.vodFixedBatchSegmentCount = clampNumber(normalized.vodFixedBatchSegmentCount, 1, 100, defaults.vodFixedBatchSegmentCount);
-  normalized.vodCrf = clampNumber(normalized.vodCrf, 16, 35, defaults.vodCrf);
-
-  return normalized;
-}
-
-function normalizeSyncInterval(value: number): number {
-  const parsed = Number.isFinite(value) ? Math.round(value) : defaults.metadataSyncIntervalMinutes;
-  return METADATA_SYNC_INTERVALS.includes(parsed as MetadataSyncIntervalMinutes) ? parsed : defaults.metadataSyncIntervalMinutes;
-}
-
-function clampNumber(value: number, min: number, max: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
+function clampInt(value: number, min: number, max: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
 }
