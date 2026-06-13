@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { env, getTranscodeCacheDir } from "../config/env.js";
@@ -21,7 +21,7 @@ const vodSegmentParamsSchema = vodParamsSchema.extend({ segment: z.string().rege
 type VodProgress = { frame?: number; fps?: number; bitrate?: string; outTime?: string; speed?: string; progress?: string };
 type VodStatus = "starting" | "running" | "exited" | "failed";
 type VodBatchSnapshot = { firstSegmentIndex: number; lastSegmentIndex: number; segmentCount: number; firstSegmentName: string; lastSegmentName: string; startSeconds: number; durationSeconds: number; startedAt: string; finishedAt?: string; speed?: string; fps?: number; preset?: string; crf?: number; videoBitrateKbps?: number; audioMode?: string; qsv?: { requestedMode: string; runtimeMode: string; active: boolean; fallbackToCpu: boolean; reason?: string; fallbackReason?: string } };
-type VodSession = { id: string; streamId: string; title?: string; sourceAddon?: string; sourceQuality?: string; quality: TranscodeQuality; bufferPreset: BufferPreset; originalUrl: string; durationSeconds: number; segmentSeconds: number; targetBufferSeconds: number; outputDir: string; playlistPath: string; createdAt: string; updatedAt: string; status: VodStatus; error?: string; lastLog?: string; activeSegment?: string; activeBatch?: VodBatchSnapshot; lastBatch?: VodBatchSnapshot; progress?: VodProgress; speedStats?: TranscodeSpeedStats; activeProcess?: ChildProcessWithoutNullStreams; qsv?: VodBatchSnapshot["qsv"] };
+type VodSession = { id: string; streamId: string; title?: string; sourceAddon?: string; sourceQuality?: string; quality: TranscodeQuality; bufferPreset: BufferPreset; originalUrl: string; durationSeconds: number; segmentSeconds: number; targetBufferSeconds: number; outputDir: string; playlistPath: string; createdAt: string; updatedAt: string; status: VodStatus; error?: string; lastLog?: string; activeSegment?: string; activeBatch?: VodBatchSnapshot; lastBatch?: VodBatchSnapshot; progress?: VodProgress; speedStats?: TranscodeSpeedStats; activeProcess?: ChildProcess; qsv?: VodBatchSnapshot["qsv"] };
 
 const vodSessions = new Map<string, VodSession>();
 const activeSegments = new Map<string, Promise<void>>();
@@ -395,7 +395,7 @@ function countGeneratedSegments(session: VodSession): number { return getGenerat
 function getSegmentCount(session: VodSession): number { return Math.max(1, Math.ceil(session.durationSeconds / session.segmentSeconds)); }
 function parseSegmentIndex(segmentName: string): number { return Number.parseInt(segmentName.match(/\d{5}/)?.[0] ?? "0", 10); }
 function buildVideoFilter(width?: number, height?: number): string { const filters: string[] = []; if (width && height) filters.push(`scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2`); filters.push("format=yuv420p"); return filters.join(","); }
-function resolveBufferPreset(value?: string): BufferPreset { return value && isBufferPreset(value) ? value : getEffectiveTranscodeBufferPreset(); }
+function resolveBufferPreset(value?: string): BufferPreset { if (value && isBufferPreset(value)) return value; return getEffectiveTranscodeBufferPreset() as BufferPreset; }
 
 async function probeDurationSeconds(url: string): Promise<number> {
   const output = await new Promise<string>((resolve, reject) => {
