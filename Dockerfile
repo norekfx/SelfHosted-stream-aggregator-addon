@@ -18,7 +18,12 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    vainfo \
+    intel-media-va-driver \
+    i965-va-driver \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json ./
 COPY --from=prod-deps /app/node_modules ./node_modules
