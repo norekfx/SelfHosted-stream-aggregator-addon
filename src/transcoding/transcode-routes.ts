@@ -1,4 +1,5 @@
 import { createReadStream, existsSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -32,12 +33,17 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
     }
 
     const session = stopTranscodeSession(params.data.sessionId, "stopped from system panel");
-    if (!session) {
-      reply.code(404);
-      return { error: "Transcode session not found." };
+    if (session) return { session };
+
+    const vodSession = listVodTranscodeSessions().find((item) => item.id === params.data.sessionId);
+    if (vodSession) {
+      const killed = await stopFfmpegProcessForSession(params.data.sessionId);
+      writeSystemLog(killed ? "info" : "warn", "transcode-vod", killed ? "VOD transcode stop requested." : "VOD transcode stop requested, but no matching FFmpeg process was found.", { sessionId: params.data.sessionId, streamId: vodSession.streamId, quality: vodSession.quality });
+      return { session: { ...vodSession, status: killed ? "exited" : vodSession.status, stopReason: "stopped from system panel" } };
     }
 
-    return { session };
+    reply.code(404);
+    return { error: "Transcode session not found." };
   });
 
   app.get<{ Params: { streamId: string; quality: string }; Querystring: { buffer?: string } }>(
@@ -118,6 +124,16 @@ function resolveBufferPreset(value: string | undefined): BufferPreset {
 
   const setting = getEffectiveTranscodeBufferPreset();
   return isBufferPreset(setting) ? setting : "auto";
+}
+
+async function stopFfmpegProcessForSession(sessionId: string): Promise<boolean> {
+  const safeSessionId = sessionId.replace(/[^A-Za-z0-9_-]/g, "");
+  if (!safeSessionId) return false;
+  return new Promise((resolve) => {
+    execFile("pkill", ["-TERM", "-f", safeSessionId], { timeout: 5_000 }, (error) => {
+      resolve(!error);
+    });
+  });
 }
 
 async function waitForPlaylist(path: string, timeoutMs: number): Promise<boolean> {
