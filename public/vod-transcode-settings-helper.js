@@ -2,6 +2,7 @@ const VOD_SETTING_FIELDS = [
   "transcodeMode",
   "liveIntelQsvMode",
   "vodIntelQsvMode",
+  "vodTranscodeStrategy",
   "vodSegmentSeconds",
   "vodStartupBufferSeconds",
   "vodBufferProgression",
@@ -65,6 +66,8 @@ function installVodTranscodeSettingsUi() {
       <p class="hint">Poniższe ustawienia dotyczą tylko VOD HLS. Linki transkodowane w streamach będą domyślnie używać VOD HLS.</p>
       <label>Intel Quick Sync Video<select id="vodIntelQsvMode"><option value="disabled">Wyłączone / CPU libx264</option><option value="encode">QSV tylko wyjście H.264</option><option value="decode_encode">QSV wejście + wyjście H.264</option></select></label>
       <div id="vodIntelQsvStatus" class="list empty">Intel QSV nie sprawdzony.</div>
+      <label>Sposób transkodowania VOD<select id="vodTranscodeStrategy"><option value="batch">Paczki / seek-friendly</option><option value="worker">Worker / pełna playlista VOD</option><option value="worker_v2">Worker v2 / event-live</option></select></label>
+      <p id="vodTranscodeStrategyHint" class="hint"></p>
       <label>Długość segmentów<select id="vodSegmentSeconds"><option value="4">4 sek</option><option value="6">6 sek</option><option value="8">8 sek</option><option value="10">10 sek</option><option value="12">12 sek</option><option value="15">15 sek</option><option value="20">20 sek</option></select></label>
       <label>Bufor startowy<input id="vodStartupBufferSeconds" type="number" min="1" max="600" step="1" value="20" /></label>
       <label>Progresja buforu<select id="vodBufferProgression"><option value="target">Bufor ustawiony powyżej</option><option value="infinite">Nieskończony / do końca filmu</option></select></label>
@@ -77,14 +80,14 @@ function installVodTranscodeSettingsUi() {
     </div>
   `);
 
-  for (const id of ["transcodeMode", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode"]) document.getElementById(id)?.addEventListener("change", () => { updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
+  for (const id of ["transcodeMode", "vodTranscodeStrategy", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode"]) document.getElementById(id)?.addEventListener("change", () => { updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
   vodSettingsFetch("/admin/settings").then((response) => response.json()).then((data) => fillVodTranscodeSettings(data.settings ?? {})).catch(() => {});
   refreshIntelQsvStatus();
   updateVodSettingsVisibility();
 }
 
 function fillVodTranscodeSettings(settings) {
-  const defaults = { transcodeMode: "vod", liveIntelQsvMode: "disabled", vodIntelQsvMode: "disabled", vodSegmentSeconds: 10, vodStartupBufferSeconds: 20, vodBufferProgression: "infinite", vodAdaptiveBatchEnabled: true, vodFixedBatchSegmentCount: 2, vodQualityMode: "auto", vodCrf: 26, vodBitrateMode: "auto", vodAudioMode: "aac" };
+  const defaults = { transcodeMode: "vod", liveIntelQsvMode: "disabled", vodIntelQsvMode: "disabled", vodTranscodeStrategy: "batch", vodSegmentSeconds: 10, vodStartupBufferSeconds: 60, vodBufferProgression: "infinite", vodAdaptiveBatchEnabled: false, vodFixedBatchSegmentCount: 12, vodQualityMode: "auto", vodCrf: 26, vodBitrateMode: "auto", vodAudioMode: "aac" };
   for (const field of VOD_SETTING_FIELDS) {
     const element = document.getElementById(field);
     if (!element) continue;
@@ -101,14 +104,22 @@ function updateVodSettingsVisibility() {
   const vod = document.getElementById("vodTranscodeSettingsBlock");
   if (live) live.style.display = mode === "live" ? "contents" : "none";
   if (vod) vod.style.display = mode === "vod" ? "contents" : "none";
+  const strategy = document.getElementById("vodTranscodeStrategy")?.value ?? "batch";
+  const isWorker = mode === "vod" && strategy !== "batch";
   const adaptive = document.getElementById("vodAdaptiveBatchEnabled")?.value !== "false";
   const qualityMode = document.getElementById("vodQualityMode")?.value ?? "auto";
   const batchLabel = document.getElementById("vodFixedBatchSegmentCountLabel");
   const crfLabel = document.getElementById("vodCrfLabel");
   const bitrateLabel = document.getElementById("vodBitrateModeLabel");
-  if (batchLabel) batchLabel.style.display = mode === "vod" && !adaptive ? "" : "none";
-  if (crfLabel) crfLabel.style.display = mode === "vod" && qualityMode === "enabled" ? "" : "none";
-  if (bitrateLabel) bitrateLabel.style.display = mode === "vod" && qualityMode !== "auto" ? "" : "none";
+  const hint = document.getElementById("vodTranscodeStrategyHint");
+  for (const id of ["vodSegmentSeconds", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodQualityMode"]) {
+    const label = document.getElementById(id)?.closest("label");
+    if (label) label.style.display = isWorker ? "none" : "";
+  }
+  if (batchLabel) batchLabel.style.display = mode === "vod" && !adaptive && !isWorker ? "" : "none";
+  if (crfLabel) crfLabel.style.display = mode === "vod" && (isWorker || qualityMode !== "auto") ? "" : "none";
+  if (bitrateLabel) bitrateLabel.style.display = mode === "vod" && (isWorker || qualityMode !== "auto") ? "" : "none";
+  if (hint) hint.textContent = strategy === "worker_v2" ? "Worker v2: dynamiczna playlista EVENT, stabilniejsza dla jednego długiego FFmpeg, ale mniej klasyczna dla pełnego timeline." : strategy === "worker" ? "Worker: pełna playlista VOD, segmenty powstają do przodu jednym długim FFmpeg od aktualnego miejsca." : "Paczki: obecny tryb, lepszy do częstego przewijania, ale może mieć przerwy między paczkami.";
 }
 
 async function refreshIntelQsvStatus() {
