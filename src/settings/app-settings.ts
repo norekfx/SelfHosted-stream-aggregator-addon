@@ -221,6 +221,24 @@ export function getEffectiveTranscodeMode(): TranscodeMode {
   return getAppSettings().transcodeMode;
 }
 
+export function getMetadataSyncTtlMs(): number {
+  const minutes = getAppSettings().metadataSyncIntervalMinutes;
+  if (!Number.isFinite(minutes) || minutes <= 0) return 1;
+  return minutes * 60 * 1000;
+}
+
+export function getKometaAnimeIdsRefreshTtlMs(): number {
+  const interval = getAppSettings().docchiKometaAnimeIdsRefreshInterval;
+  switch (interval) {
+    case "daily": return 24 * 60 * 60 * 1000;
+    case "weekly": return 7 * 24 * 60 * 60 * 1000;
+    case "biweekly": return 14 * 24 * 60 * 60 * 1000;
+    case "monthly": return 30 * 24 * 60 * 60 * 1000;
+    case "once": return Number.POSITIVE_INFINITY;
+    default: return 24 * 60 * 60 * 1000;
+  }
+}
+
 function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   const normalized = { ...settings };
   if (!TRANSCODE_MODES.includes(normalized.transcodeMode)) normalized.transcodeMode = defaults.transcodeMode;
