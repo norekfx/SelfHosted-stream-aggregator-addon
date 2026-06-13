@@ -8,6 +8,7 @@ export type DocchiPublicMappingMode = "disabled" | "animation_series" | "series"
 export type DocchiKometaAnimeIdsRefreshInterval = "daily" | "weekly" | "biweekly" | "monthly" | "once";
 export type DocchiStreamForceMode = "enabled" | "disabled" | "partial";
 export type TranscodeMode = "vod" | "live";
+export type VodTranscodeStrategy = "batch" | "worker" | "worker_v2";
 export type VodBufferProgression = "target" | "infinite";
 export type VodQualityMode = "disabled" | "enabled" | "auto";
 export type VodBitrateMode = "auto" | "250" | "500" | "800" | "1200" | "1800" | "2500" | "3500" | "5000" | "8000" | "12000" | "18000";
@@ -52,6 +53,7 @@ export type AppSettings = {
   transcodeMode: TranscodeMode;
   liveIntelQsvMode: IntelQsvMode;
   vodIntelQsvMode: IntelQsvMode;
+  vodTranscodeStrategy: VodTranscodeStrategy;
   vodSegmentSeconds: number;
   vodStartupBufferSeconds: number;
   vodBufferProgression: VodBufferProgression;
@@ -68,6 +70,7 @@ export const TRANSCODE_QUALITY_ORDER = ["144p", "240p", "360p", "480p", "720p", 
 export const TRANSCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] as const;
 export const TRANSCODE_MODES = ["vod", "live"] as const;
 export const INTEL_QSV_MODES = ["disabled", "encode", "decode_encode"] as const;
+export const VOD_TRANSCODE_STRATEGIES = ["batch", "worker", "worker_v2"] as const;
 export const VOD_BUFFER_PROGRESSION_MODES = ["target", "infinite"] as const;
 export const VOD_QUALITY_MODES = ["disabled", "enabled", "auto"] as const;
 export const VOD_BITRATE_MODES = ["auto", "250", "500", "800", "1200", "1800", "2500", "3500", "5000", "8000", "12000", "18000"] as const;
@@ -116,6 +119,7 @@ const defaults: AppSettings = {
   transcodeMode: "vod",
   liveIntelQsvMode: "disabled",
   vodIntelQsvMode: "disabled",
+  vodTranscodeStrategy: "batch",
   vodSegmentSeconds: 10,
   vodStartupBufferSeconds: 60,
   vodBufferProgression: "infinite",
@@ -244,6 +248,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   if (!TRANSCODE_MODES.includes(normalized.transcodeMode)) normalized.transcodeMode = defaults.transcodeMode;
   if (!INTEL_QSV_MODES.includes(normalized.liveIntelQsvMode)) normalized.liveIntelQsvMode = defaults.liveIntelQsvMode;
   if (!INTEL_QSV_MODES.includes(normalized.vodIntelQsvMode)) normalized.vodIntelQsvMode = defaults.vodIntelQsvMode;
+  if (!VOD_TRANSCODE_STRATEGIES.includes(normalized.vodTranscodeStrategy)) normalized.vodTranscodeStrategy = defaults.vodTranscodeStrategy;
   normalized.vodSegmentSeconds = clampInt(normalized.vodSegmentSeconds, 2, 30, defaults.vodSegmentSeconds);
   normalized.vodStartupBufferSeconds = clampInt(normalized.vodStartupBufferSeconds, 1, 600, defaults.vodStartupBufferSeconds);
   if (!VOD_BUFFER_PROGRESSION_MODES.includes(normalized.vodBufferProgression)) normalized.vodBufferProgression = defaults.vodBufferProgression;
