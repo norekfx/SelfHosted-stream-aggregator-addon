@@ -7,22 +7,23 @@ import type { BufferPreset } from "../stremio/manifest.js";
 import { getSelectedOriginal } from "../streams/original-store.js";
 import { writeSystemLog } from "../system/system-log.js";
 import { isBufferPreset, isTranscodeQuality } from "./transcode-profiles.js";
-import { listVodTranscodeSessions, stopVodTranscodeSession } from "./transcode-vod-routes.js";
-import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession, listTranscodeSessions, stopTranscodeSession } from "./transcode-session.js";
+import { listVodTranscodeSessions, stopAllVodTranscodeSessions, stopVodTranscodeSession } from "./transcode-vod-routes.js";
+import { createTranscodeSessionId, getOrCreateTranscodeSession, getTranscodeSession, listTranscodeSessions, stopAllTranscodeSessions, stopTranscodeSession } from "./transcode-session.js";
 
-const playlistParamsSchema = z.object({
-  streamId: z.string().min(1),
-  quality: z.string()
-});
-
-const segmentParamsSchema = playlistParamsSchema.extend({
-  segment: z.string().regex(/^segment_\d{5}\.ts$/)
-});
-
+const playlistParamsSchema = z.object({ streamId: z.string().min(1), quality: z.string() });
+const segmentParamsSchema = playlistParamsSchema.extend({ segment: z.string().regex(/^segment_\d{5}\.ts$/) });
 const stopParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 export async function registerTranscodeRoutes(app: FastifyInstance): Promise<void> {
   app.get("/transcode/sessions", async () => ({ sessions: [...listTranscodeSessions().map((session) => ({ ...session, mode: "live" })), ...listVodTranscodeSessions()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50) }));
+
+  app.post("/transcode/sessions/stop-all", async () => {
+    const live = stopAllTranscodeSessions("force stopped from system panel");
+    const vod = stopAllVodTranscodeSessions("force stopped from system panel");
+    const stopped = [...live.map((session) => ({ ...session, mode: "live" })), ...vod];
+    writeSystemLog("info", "transcode", "Force stop requested for all active transcode sessions.", { stopped: stopped.length, live: live.length, vod: vod.length });
+    return { ok: true, stopped };
+  });
 
   app.post<{ Params: { sessionId: string } }>("/transcode/sessions/:sessionId/stop", async (request, reply) => {
     const params = stopParamsSchema.safeParse(request.params);
@@ -40,97 +41,51 @@ export async function registerTranscodeRoutes(app: FastifyInstance): Promise<voi
       return { session: vodSession };
     }
 
+    const live = stopAllTranscodeSessions("fallback force stop from system panel");
+    const vod = stopAllVodTranscodeSessions("fallback force stop from system panel");
+    const stopped = [...live.map((item) => ({ ...item, mode: "live" })), ...vod];
+    if (stopped.length > 0) return { session: stopped[0], stopped };
+
     reply.code(404);
     return { error: "Transcode session not found." };
   });
 
-  app.get<{ Params: { streamId: string; quality: string }; Querystring: { buffer?: string } }>(
-    "/transcode/:streamId/:quality/master.m3u8",
-    async (request, reply) => {
-      const params = playlistParamsSchema.safeParse(request.params);
-      if (!params.success || !isTranscodeQuality(params.data.quality)) {
-        reply.code(400);
-        return { error: "Invalid transcode request.", details: params.success ? "Invalid transcode quality." : params.error.flatten() };
-      }
-
-      const bufferPreset = resolveBufferPreset(request.query.buffer);
-      const original = getSelectedOriginal(params.data.streamId);
-      if (!original) {
-        reply.code(404);
-        return { error: "Selected original stream was not found or has expired." };
-      }
-
-      const session = getOrCreateTranscodeSession(original, params.data.quality, bufferPreset);
-      const playlistReady = await waitForPlaylist(session.playlistPath, 12_000);
-      if (!playlistReady) {
-        writeSystemLog("warn", "transcode", "Playlist was not ready before the player timeout.", {
-          sessionId: session.id,
-          streamId: session.streamId,
-          quality: session.quality,
-          status: session.status,
-          speed: session.progress?.speed,
-          fps: session.progress?.fps,
-          error: session.error
-        });
-        reply.code(session.status === "failed" ? 500 : 503);
-        reply.header("content-type", "application/vnd.apple.mpegurl");
-        reply.header("cache-control", "no-store");
-        return "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-ENDLIST\n";
-      }
-
+  app.get<{ Params: { streamId: string; quality: string }; Querystring: { buffer?: string } }>("/transcode/:streamId/:quality/master.m3u8", async (request, reply) => {
+    const params = playlistParamsSchema.safeParse(request.params);
+    if (!params.success || !isTranscodeQuality(params.data.quality)) { reply.code(400); return { error: "Invalid transcode request.", details: params.success ? "Invalid transcode quality." : params.error.flatten() }; }
+    const bufferPreset = resolveBufferPreset(request.query.buffer);
+    const original = getSelectedOriginal(params.data.streamId);
+    if (!original) { reply.code(404); return { error: "Selected original stream was not found or has expired." }; }
+    const session = getOrCreateTranscodeSession(original, params.data.quality, bufferPreset);
+    if (session.stopReason) { reply.code(410); reply.header("content-type", "application/vnd.apple.mpegurl"); reply.header("cache-control", "no-store"); return "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-ENDLIST\n"; }
+    const playlistReady = await waitForPlaylist(session.playlistPath, 12_000);
+    if (!playlistReady) {
+      writeSystemLog("warn", "transcode", "Playlist was not ready before the player timeout.", { sessionId: session.id, streamId: session.streamId, quality: session.quality, status: session.status, speed: session.progress?.speed, fps: session.progress?.fps, error: session.error });
+      reply.code(session.status === "failed" ? 500 : 503);
       reply.header("content-type", "application/vnd.apple.mpegurl");
       reply.header("cache-control", "no-store");
-      return createReadStream(session.playlistPath);
+      return "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-ENDLIST\n";
     }
-  );
+    reply.header("content-type", "application/vnd.apple.mpegurl");
+    reply.header("cache-control", "no-store");
+    return createReadStream(session.playlistPath);
+  });
 
-  app.get<{ Params: { streamId: string; quality: string; segment: string }; Querystring: { buffer?: string } }>(
-    "/transcode/:streamId/:quality/:segment",
-    async (request, reply) => {
-      const params = segmentParamsSchema.safeParse(request.params);
-      if (!params.success || !isTranscodeQuality(params.data.quality)) {
-        reply.code(400);
-        return { error: "Invalid transcode segment request.", details: params.success ? "Invalid transcode quality." : params.error.flatten() };
-      }
-
-      const bufferPreset = resolveBufferPreset(request.query.buffer);
-      const sessionId = createTranscodeSessionId(params.data.streamId, params.data.quality, bufferPreset);
-      const session = getTranscodeSession(sessionId);
-      if (!session) {
-        reply.code(404);
-        return { error: "Transcode session not found." };
-      }
-
-      const segmentPath = join(session.outputDir, params.data.segment);
-      if (!existsSync(segmentPath)) {
-        reply.code(404);
-        return { error: "Transcode segment not ready." };
-      }
-
-      reply.header("content-type", "video/mp2t");
-      reply.header("cache-control", "public, max-age=30");
-      return createReadStream(segmentPath);
-    }
-  );
+  app.get<{ Params: { streamId: string; quality: string; segment: string }; Querystring: { buffer?: string } }>("/transcode/:streamId/:quality/:segment", async (request, reply) => {
+    const params = segmentParamsSchema.safeParse(request.params);
+    if (!params.success || !isTranscodeQuality(params.data.quality)) { reply.code(400); return { error: "Invalid transcode segment request.", details: params.success ? "Invalid transcode quality." : params.error.flatten() }; }
+    const bufferPreset = resolveBufferPreset(request.query.buffer);
+    const sessionId = createTranscodeSessionId(params.data.streamId, params.data.quality, bufferPreset);
+    const session = getTranscodeSession(sessionId);
+    if (!session) { reply.code(404); return { error: "Transcode session not found." }; }
+    if (session.stopReason) { reply.code(410); return { error: "Transcode session was stopped." }; }
+    const segmentPath = join(session.outputDir, params.data.segment);
+    if (!existsSync(segmentPath)) { reply.code(404); return { error: "Transcode segment not ready." }; }
+    reply.header("content-type", "video/mp2t");
+    reply.header("cache-control", "public, max-age=30");
+    return createReadStream(segmentPath);
+  });
 }
 
-function resolveBufferPreset(value: string | undefined): BufferPreset {
-  const requested = value ?? "";
-  if (isBufferPreset(requested)) {
-    return requested;
-  }
-
-  const setting = getEffectiveTranscodeBufferPreset();
-  return isBufferPreset(setting) ? setting : "auto";
-}
-
-async function waitForPlaylist(path: string, timeoutMs: number): Promise<boolean> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (existsSync(path)) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  return false;
-}
+function resolveBufferPreset(value: string | undefined): BufferPreset { const requested = value ?? ""; if (isBufferPreset(requested)) return requested; const setting = getEffectiveTranscodeBufferPreset(); return isBufferPreset(setting) ? setting : "auto"; }
+async function waitForPlaylist(path: string, timeoutMs: number): Promise<boolean> { const startedAt = Date.now(); while (Date.now() - startedAt < timeoutMs) { if (existsSync(path)) return true; await new Promise((resolve) => setTimeout(resolve, 250)); } return false; }
