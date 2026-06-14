@@ -250,7 +250,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   if (!INTEL_QSV_MODES.includes(normalized.vodIntelQsvMode)) normalized.vodIntelQsvMode = defaults.vodIntelQsvMode;
   if (!VOD_TRANSCODE_STRATEGIES.includes(normalized.vodTranscodeStrategy)) normalized.vodTranscodeStrategy = defaults.vodTranscodeStrategy;
   normalized.vodSegmentSeconds = clampInt(normalized.vodSegmentSeconds, 2, 30, defaults.vodSegmentSeconds);
-  normalized.vodStartupBufferSeconds = clampInt(normalized.vodStartupBufferSeconds, 1, 600, defaults.vodStartupBufferSeconds);
+  normalized.vodStartupBufferSeconds = clampInt(normalized.vodStartupBufferSeconds, 0, 600, defaults.vodStartupBufferSeconds);
   if (!VOD_BUFFER_PROGRESSION_MODES.includes(normalized.vodBufferProgression)) normalized.vodBufferProgression = defaults.vodBufferProgression;
   normalized.vodAdaptiveBatchEnabled = Boolean(normalized.vodAdaptiveBatchEnabled);
   normalized.vodFixedBatchSegmentCount = clampInt(normalized.vodFixedBatchSegmentCount, 1, 100, defaults.vodFixedBatchSegmentCount);
