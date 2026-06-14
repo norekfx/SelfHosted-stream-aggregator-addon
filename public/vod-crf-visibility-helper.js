@@ -24,9 +24,18 @@ function applyVodTranscodeStrategy() {
   }
 }
 
+function normalizeVodStartupBufferInputValidity() {
+  const input = document.getElementById("vodStartupBufferSeconds");
+  if (!input) return;
+  input.min = "0";
+  input.setAttribute("min", "0");
+  input.setCustomValidity("");
+}
+
 function installVodTranscodeStrategyUi() {
   const vodBlock = document.getElementById("vodTranscodeSettingsBlock");
   const qsvLabel = document.getElementById("vodIntelQsvMode")?.closest("label");
+  normalizeVodStartupBufferInputValidity();
   if (!vodBlock || !qsvLabel || document.getElementById("vodTranscodeStrategy")) return;
   qsvLabel.insertAdjacentHTML("beforebegin", `
     <label>Sposób transkodowania VOD<select id="vodTranscodeStrategy"><option value="batch">Paczki / seek-friendly</option><option value="worker">Worker / ciągłe dogenerowywanie</option></select></label>
@@ -39,6 +48,7 @@ function installVodTranscodeStrategyUi() {
 
 function updateVodTranscodeStrategyVisibility() {
   installVodTranscodeStrategyUi();
+  normalizeVodStartupBufferInputValidity();
   applyVodTranscodeStrategy();
   const transcodeMode = document.getElementById("transcodeMode")?.value ?? "vod";
   const strategy = getVodTranscodeStrategy();
@@ -64,11 +74,13 @@ function updateVodTranscodeStrategyVisibility() {
 
 function installVodCrfVisibilityForManualQuality() {
   updateVodTranscodeStrategyVisibility();
-  for (const id of ["transcodeMode", "vodQualityMode", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodFixedBatchSegmentCount"]) {
+  normalizeVodStartupBufferInputValidity();
+  for (const id of ["transcodeMode", "vodQualityMode", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodFixedBatchSegmentCount", "vodStartupBufferSeconds"]) {
     const element = document.getElementById(id);
     if (element && element.dataset.vodCrfVisibilityBound !== "true") {
       element.dataset.vodCrfVisibilityBound = "true";
       element.addEventListener("change", () => setTimeout(updateVodTranscodeStrategyVisibility, 0));
+      element.addEventListener("input", () => setTimeout(normalizeVodStartupBufferInputValidity, 0));
     }
   }
 }
