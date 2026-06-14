@@ -24,16 +24,18 @@ window.fetch = async (input, init = {}) => {
       normalizeOptionalNumericSettings(body);
       normalizeInactiveTranscodeRanges(body);
       init = { ...init, body: JSON.stringify(body) };
-    } catch {
-      // Keep the original request if parsing failed.
-    }
+    } catch {}
   }
 
   return settingsSaveNormalizerFetch(input, init);
 };
 
 function normalizeOptionalNumericSettings(body) {
+  const startupMode = document.getElementById("vodStartupBufferMode")?.value;
+  if (startupMode === "disabled") body.vodStartupBufferSeconds = 0;
+
   for (const field of OPTIONAL_NUMERIC_SETTINGS) {
+    if (field === "vodStartupBufferSeconds" && startupMode === "disabled") continue;
     const element = document.getElementById(field);
     if (!element) continue;
     const raw = String(element.value ?? "").trim();
