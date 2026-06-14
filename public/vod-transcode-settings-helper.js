@@ -18,6 +18,7 @@ const VOD_BOOLEAN_FIELDS = new Set(["vodAdaptiveBatchEnabled"]);
 const vodSettingsFetch = window.fetch.bind(window);
 
 window.fetch = async (input, init = {}) => {
+  normalizeVodSettingsFormValidity();
   const url = typeof input === "string" ? input : input?.url ?? "";
   const method = String(init.method ?? "GET").toUpperCase();
   if (url === "/admin/settings" && method === "PATCH" && init.body) {
@@ -38,12 +39,29 @@ window.fetch = async (input, init = {}) => {
   return response;
 };
 
+function normalizeVodSettingsFormValidity() {
+  const form = document.getElementById("settingsForm");
+  if (form) {
+    form.noValidate = true;
+    form.setAttribute("novalidate", "novalidate");
+  }
+  const startupBuffer = document.getElementById("vodStartupBufferSeconds");
+  if (startupBuffer) {
+    startupBuffer.min = "0";
+    startupBuffer.setAttribute("min", "0");
+    startupBuffer.setCustomValidity("");
+  }
+}
+
 function installVodTranscodeSettingsUi() {
+  normalizeVodSettingsFormValidity();
   const liveAnchor = document.getElementById("defaultTranscodeBufferPreset");
   if (!liveAnchor || document.getElementById("transcodeMode")) return;
   const panel = liveAnchor.closest("article");
   const form = liveAnchor.closest(".settings-form");
   if (!panel || !form) return;
+  form.noValidate = true;
+  form.setAttribute("novalidate", "novalidate");
 
   panel.querySelector("h2").textContent = "Transkodowanie";
   liveAnchor.closest("label")?.insertAdjacentHTML("beforebegin", `
@@ -80,13 +98,16 @@ function installVodTranscodeSettingsUi() {
     </div>
   `);
 
-  for (const id of ["transcodeMode", "vodTranscodeStrategy", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode"]) document.getElementById(id)?.addEventListener("change", () => { updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
+  normalizeVodSettingsFormValidity();
+  for (const id of ["transcodeMode", "vodTranscodeStrategy", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode", "vodStartupBufferSeconds"]) document.getElementById(id)?.addEventListener("change", () => { normalizeVodSettingsFormValidity(); updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
+  document.getElementById("vodStartupBufferSeconds")?.addEventListener("input", normalizeVodSettingsFormValidity);
   vodSettingsFetch("/admin/settings").then((response) => response.json()).then((data) => fillVodTranscodeSettings(data.settings ?? {})).catch(() => {});
   refreshIntelQsvStatus();
   updateVodSettingsVisibility();
 }
 
 function fillVodTranscodeSettings(settings) {
+  normalizeVodSettingsFormValidity();
   const defaults = { transcodeMode: "vod", liveIntelQsvMode: "disabled", vodIntelQsvMode: "disabled", vodTranscodeStrategy: "batch", vodSegmentSeconds: 10, vodStartupBufferSeconds: 60, vodBufferProgression: "infinite", vodAdaptiveBatchEnabled: false, vodFixedBatchSegmentCount: 12, vodQualityMode: "auto", vodCrf: 26, vodBitrateMode: "auto", vodAudioMode: "aac" };
   for (const field of VOD_SETTING_FIELDS) {
     const element = document.getElementById(field);
@@ -94,11 +115,13 @@ function fillVodTranscodeSettings(settings) {
     const value = settings[field] ?? defaults[field];
     element.value = VOD_BOOLEAN_FIELDS.has(field) ? String(value === true) : String(value);
   }
+  normalizeVodSettingsFormValidity();
   updateVodSettingsVisibility();
   refreshIntelQsvStatus();
 }
 
 function updateVodSettingsVisibility() {
+  normalizeVodSettingsFormValidity();
   const mode = document.getElementById("transcodeMode")?.value ?? "vod";
   const live = document.getElementById("liveTranscodeSettingsBlock");
   const vod = document.getElementById("vodTranscodeSettingsBlock");
