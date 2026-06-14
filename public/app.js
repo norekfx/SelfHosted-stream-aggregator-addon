@@ -37,9 +37,31 @@ const titles = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
+function normalizeSettingsFormValidation() {
+  const form = $('#settingsForm');
+  if (form) {
+    form.noValidate = true;
+    form.setAttribute('novalidate', 'novalidate');
+  }
+  const vodStartupBuffer = $('#vodStartupBufferSeconds');
+  if (vodStartupBuffer) {
+    vodStartupBuffer.min = '0';
+    vodStartupBuffer.setAttribute('min', '0');
+    vodStartupBuffer.setCustomValidity('');
+  }
+}
+
+document.addEventListener('click', (event) => {
+  if (!event.target?.closest?.('#settingsForm button[type="submit"],#settingsForm .primary-btn')) return;
+  normalizeSettingsFormValidation();
+}, true);
+
+setInterval(normalizeSettingsFormValidation, 500);
+
 init();
 
 async function init() {
+  normalizeSettingsFormValidation();
   bindNavigation();
   bindForms();
   renderLanguageSelects();
@@ -110,7 +132,9 @@ function bindForms() {
   });
   $('#addonForm').addEventListener('submit', async (event) => { event.preventDefault(); const manifestUrl = $('#addonUrl').value.trim(); await api('/admin/addons', { method: 'POST', body: { manifestUrl } }); $('#addonUrl').value = ''; toast('Addon dodany.'); await loadAddons(); await loadSystemLogs(); });
   $('#diagnosticsForm').addEventListener('submit', async (event) => { event.preventDefault(); await runDiagnostics(); });
+  normalizeSettingsFormValidation();
   $('#settingsForm').addEventListener('submit', async (event) => {
+    normalizeSettingsFormValidation();
     event.preventDefault();
     const body = { preferredAudioLanguage: $('#preferredAudioLanguage').value || 'pl', preferredSubtitleLanguage: $('#preferredSubtitleLanguage').value || 'pl', defaultTranscodeBufferPreset: $('#defaultTranscodeBufferPreset').value, streamValidationTimeoutMs: Number($('#streamValidationTimeoutMs').value), maxTranscodeSessions: Number($('#maxTranscodeSessions').value), publicBaseUrl: $('#publicBaseUrl').value.trim(), autoRefreshCache: $('#autoRefreshCache').checked, showDiagnosticDetails: $('#showDiagnosticDetails').checked };
     const result = await api('/admin/settings', { method: 'PATCH', body });
@@ -171,7 +195,7 @@ function renderSystemLogs() { if (!state.logs.length) { $('#systemLogs').innerHT
 function renderSessions() { if (!state.sessions.length) { $('#sessionsList').innerHTML = '<div class="list empty">Brak aktywnych sesji.</div>'; return; } $('#sessionsList').innerHTML = table(['Sesja', 'Utworzona', 'Ostatnio widziana', 'Wygasa'], state.sessions.map((session) => [session.isCurrent ? badge('current') : escapeHtml(session.id.slice(0, 8)), escapeHtml(formatDate(session.createdAt)), escapeHtml(formatDate(session.lastSeenAt)), escapeHtml(formatDate(session.expiresAt))])); }
 function getLanguageOptions() { return state.languages.length ? state.languages : fallbackLanguages; }
 function renderLanguageSelects() { const options = getLanguageOptions().map((language) => `<option value="${escapeHtml(language.code)}">${escapeHtml(language.label ?? `${language.nativeName ?? language.code} / ${language.englishName ?? language.code}`)}</option>`).join(''); const audio = $('#preferredAudioLanguage'); const subtitles = $('#preferredSubtitleLanguage'); if (audio) audio.innerHTML = options; if (subtitles) subtitles.innerHTML = options; }
-function renderSettings() { const s = state.settings ?? {}; renderLanguageSelects(); $('#preferredAudioLanguage').value = s.preferredAudioLanguage ?? 'pl'; $('#preferredSubtitleLanguage').value = s.preferredSubtitleLanguage ?? 'pl'; $('#defaultTranscodeBufferPreset').value = s.defaultTranscodeBufferPreset ?? 'auto'; $('#streamValidationTimeoutMs').value = s.streamValidationTimeoutMs ?? 10000; $('#maxTranscodeSessions').value = s.maxTranscodeSessions ?? 2; $('#publicBaseUrl').value = s.publicBaseUrl ?? ''; $('#autoRefreshCache').checked = s.autoRefreshCache !== false; $('#showDiagnosticDetails').checked = s.showDiagnosticDetails !== false; }
+function renderSettings() { normalizeSettingsFormValidation(); const s = state.settings ?? {}; renderLanguageSelects(); $('#preferredAudioLanguage').value = s.preferredAudioLanguage ?? 'pl'; $('#preferredSubtitleLanguage').value = s.preferredSubtitleLanguage ?? 'pl'; $('#defaultTranscodeBufferPreset').value = s.defaultTranscodeBufferPreset ?? 'auto'; $('#streamValidationTimeoutMs').value = s.streamValidationTimeoutMs ?? 10000; $('#maxTranscodeSessions').value = s.maxTranscodeSessions ?? 2; $('#publicBaseUrl').value = s.publicBaseUrl ?? ''; $('#autoRefreshCache').checked = s.autoRefreshCache !== false; $('#showDiagnosticDetails').checked = s.showDiagnosticDetails !== false; normalizeSettingsFormValidation(); }
 function table(headers, rows) { return `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }
 function badge(value) { return `<span class="badge ${escapeHtml(String(value))}">${escapeHtml(String(value ?? '-'))}</span>`; }
 async function api(path, options = {}) { const response = await fetch(path, { method: options.method ?? 'GET', headers: options.body ? { 'content-type': 'application/json' } : undefined, body: options.body ? JSON.stringify(options.body) : undefined }); const data = await response.json().catch(() => ({})); if (response.status === 401 && !path.startsWith('/auth/')) { showAuth(false); throw new Error('Sesja wygasła. Zaloguj się ponownie.'); } if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`); return data; }
