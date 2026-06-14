@@ -27,7 +27,11 @@ window.fetch = async (input, init = {}) => {
       for (const field of VOD_SETTING_FIELDS) {
         const element = document.getElementById(field);
         if (!element) continue;
-        body[field] = VOD_BOOLEAN_FIELDS.has(field) ? element.value !== "false" : element.type === "number" ? Number(element.value) : element.value;
+        if (field === "vodStartupBufferSeconds") {
+          body[field] = getVodStartupBufferSecondsForSave();
+        } else {
+          body[field] = VOD_BOOLEAN_FIELDS.has(field) ? element.value !== "false" : element.type === "number" ? Number(element.value) : element.value;
+        }
       }
       init = { ...init, body: JSON.stringify(body) };
     } catch {}
@@ -39,6 +43,14 @@ window.fetch = async (input, init = {}) => {
   return response;
 };
 
+function getVodStartupBufferSecondsForSave() {
+  const mode = document.getElementById("vodStartupBufferMode")?.value ?? "enabled";
+  if (mode === "disabled") return 0;
+  const input = document.getElementById("vodStartupBufferSeconds");
+  const value = Number(input?.value ?? 60);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : 60;
+}
+
 function normalizeVodSettingsFormValidity() {
   const form = document.getElementById("settingsForm");
   if (form) {
@@ -47,9 +59,11 @@ function normalizeVodSettingsFormValidity() {
   }
   const startupBuffer = document.getElementById("vodStartupBufferSeconds");
   if (startupBuffer) {
-    startupBuffer.min = "0";
-    startupBuffer.setAttribute("min", "0");
+    startupBuffer.min = "1";
+    startupBuffer.setAttribute("min", "1");
     startupBuffer.setCustomValidity("");
+    if (document.getElementById("vodStartupBufferMode")?.value === "disabled") startupBuffer.disabled = true;
+    else startupBuffer.disabled = false;
   }
 }
 
@@ -87,7 +101,8 @@ function installVodTranscodeSettingsUi() {
       <label>Sposób transkodowania VOD<select id="vodTranscodeStrategy"><option value="batch">Paczki / seek-friendly</option><option value="worker">Worker / pełna playlista VOD</option><option value="worker_v2">Worker v2 / event-live</option></select></label>
       <p id="vodTranscodeStrategyHint" class="hint"></p>
       <label>Długość segmentów<select id="vodSegmentSeconds"><option value="4">4 sek</option><option value="6">6 sek</option><option value="8">8 sek</option><option value="10">10 sek</option><option value="12">12 sek</option><option value="15">15 sek</option><option value="20">20 sek</option></select></label>
-      <label>Bufor startowy<input id="vodStartupBufferSeconds" type="number" min="0" max="600" step="1" value="20" /></label>
+      <label id="vodStartupBufferModeLabel">Bufor startowy<select id="vodStartupBufferMode"><option value="enabled">Włączony</option><option value="disabled">Wyłączony — start bez bufora</option></select></label>
+      <label id="vodStartupBufferSecondsLabel">Czas bufora startowego<input id="vodStartupBufferSeconds" type="number" min="1" max="600" step="1" value="20" /></label>
       <label>Progresja buforu<select id="vodBufferProgression"><option value="target">Bufor ustawiony powyżej</option><option value="infinite">Nieskończony / do końca filmu</option></select></label>
       <label>Bufor zwiększający segmenty<select id="vodAdaptiveBatchEnabled"><option value="true">Włączony</option><option value="false">Wyłączony</option></select></label>
       <label id="vodFixedBatchSegmentCountLabel">Ilość segmentów w jednej paczce<input id="vodFixedBatchSegmentCount" type="number" min="1" max="100" step="1" value="2" /></label>
@@ -99,7 +114,7 @@ function installVodTranscodeSettingsUi() {
   `);
 
   normalizeVodSettingsFormValidity();
-  for (const id of ["transcodeMode", "vodTranscodeStrategy", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode", "vodStartupBufferSeconds"]) document.getElementById(id)?.addEventListener("change", () => { normalizeVodSettingsFormValidity(); updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
+  for (const id of ["transcodeMode", "vodTranscodeStrategy", "vodAdaptiveBatchEnabled", "vodQualityMode", "liveIntelQsvMode", "vodIntelQsvMode", "vodStartupBufferMode", "vodStartupBufferSeconds"]) document.getElementById(id)?.addEventListener("change", () => { normalizeVodSettingsFormValidity(); updateVodSettingsVisibility(); refreshIntelQsvStatus(); });
   document.getElementById("vodStartupBufferSeconds")?.addEventListener("input", normalizeVodSettingsFormValidity);
   vodSettingsFetch("/admin/settings").then((response) => response.json()).then((data) => fillVodTranscodeSettings(data.settings ?? {})).catch(() => {});
   refreshIntelQsvStatus();
@@ -113,8 +128,10 @@ function fillVodTranscodeSettings(settings) {
     const element = document.getElementById(field);
     if (!element) continue;
     const value = settings[field] ?? defaults[field];
-    element.value = VOD_BOOLEAN_FIELDS.has(field) ? String(value === true) : String(value);
+    element.value = VOD_BOOLEAN_FIELDS.has(field) ? String(value === true) : String(field === "vodStartupBufferSeconds" && Number(value) <= 0 ? defaults.vodStartupBufferSeconds : value);
   }
+  const startupBufferMode = document.getElementById("vodStartupBufferMode");
+  if (startupBufferMode) startupBufferMode.value = Number(settings.vodStartupBufferSeconds ?? defaults.vodStartupBufferSeconds) <= 0 ? "disabled" : "enabled";
   normalizeVodSettingsFormValidity();
   updateVodSettingsVisibility();
   refreshIntelQsvStatus();
@@ -128,9 +145,12 @@ function updateVodSettingsVisibility() {
   if (live) live.style.display = mode === "live" ? "contents" : "none";
   if (vod) vod.style.display = mode === "vod" ? "contents" : "none";
   const strategy = document.getElementById("vodTranscodeStrategy")?.value ?? "batch";
+  const startupBufferMode = document.getElementById("vodStartupBufferMode")?.value ?? "enabled";
   const isWorker = mode === "vod" && strategy !== "batch";
   const adaptive = document.getElementById("vodAdaptiveBatchEnabled")?.value !== "false";
   const qualityMode = document.getElementById("vodQualityMode")?.value ?? "auto";
+  const startupBufferModeLabel = document.getElementById("vodStartupBufferModeLabel");
+  const startupBufferSecondsLabel = document.getElementById("vodStartupBufferSecondsLabel");
   const batchLabel = document.getElementById("vodFixedBatchSegmentCountLabel");
   const crfLabel = document.getElementById("vodCrfLabel");
   const bitrateLabel = document.getElementById("vodBitrateModeLabel");
@@ -139,10 +159,12 @@ function updateVodSettingsVisibility() {
     const label = document.getElementById(id)?.closest("label");
     if (label) label.style.display = isWorker ? "none" : "";
   }
+  if (startupBufferModeLabel) startupBufferModeLabel.style.display = isWorker ? "" : "none";
+  if (startupBufferSecondsLabel) startupBufferSecondsLabel.style.display = isWorker && startupBufferMode === "enabled" ? "" : "none";
   if (batchLabel) batchLabel.style.display = mode === "vod" && !adaptive && !isWorker ? "" : "none";
   if (crfLabel) crfLabel.style.display = mode === "vod" && (isWorker || qualityMode !== "auto") ? "" : "none";
   if (bitrateLabel) bitrateLabel.style.display = mode === "vod" && (isWorker || qualityMode !== "auto") ? "" : "none";
-  if (hint) hint.textContent = strategy === "worker_v2" ? "Worker v2: dynamiczna playlista EVENT, stabilniejsza dla jednego długiego FFmpeg, ale mniej klasyczna dla pełnego timeline." : strategy === "worker" ? "Worker: pełna playlista VOD, segmenty powstają do przodu jednym długim FFmpeg od aktualnego miejsca." : "Paczki: obecny tryb, lepszy do częstego przewijania, ale może mieć przerwy między paczkami.";
+  if (hint) hint.textContent = strategy === "worker_v2" ? "Worker v2: dynamiczna playlista EVENT, stabilniejsza dla jednego długiego FFmpeg, ale mniej klasyczna dla pełnego timeline." : strategy === "worker" ? (startupBufferMode === "disabled" ? "Worker: startuje od razu bez bufora startowego. FFmpeg zaczyna pracę dopiero przy żądaniu odtwarzacza." : "Worker: po buforze startowym FFmpeg dostaje długą paczkę do przodu. Cel: mniej restartów FFmpeg i bardziej ciągłe użycie CPU/iGPU.") : "Paczki: obecny tryb, lepszy do częstego przewijania, ale może mieć przerwy między paczkami.";
 }
 
 async function refreshIntelQsvStatus() {
