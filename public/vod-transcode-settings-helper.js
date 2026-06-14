@@ -69,7 +69,7 @@ function installVodTranscodeSettingsUi() {
       <label>Sposób transkodowania VOD<select id="vodTranscodeStrategy"><option value="batch">Paczki / seek-friendly</option><option value="worker">Worker / pełna playlista VOD</option><option value="worker_v2">Worker v2 / event-live</option></select></label>
       <p id="vodTranscodeStrategyHint" class="hint"></p>
       <label>Długość segmentów<select id="vodSegmentSeconds"><option value="4">4 sek</option><option value="6">6 sek</option><option value="8">8 sek</option><option value="10">10 sek</option><option value="12">12 sek</option><option value="15">15 sek</option><option value="20">20 sek</option></select></label>
-      <label>Bufor startowy<input id="vodStartupBufferSeconds" type="number" min="1" max="600" step="1" value="20" /></label>
+      <label>Bufor startowy<input id="vodStartupBufferSeconds" type="number" min="0" max="600" step="1" value="20" /></label>
       <label>Progresja buforu<select id="vodBufferProgression"><option value="target">Bufor ustawiony powyżej</option><option value="infinite">Nieskończony / do końca filmu</option></select></label>
       <label>Bufor zwiększający segmenty<select id="vodAdaptiveBatchEnabled"><option value="true">Włączony</option><option value="false">Wyłączony</option></select></label>
       <label id="vodFixedBatchSegmentCountLabel">Ilość segmentów w jednej paczce<input id="vodFixedBatchSegmentCount" type="number" min="1" max="100" step="1" value="2" /></label>
