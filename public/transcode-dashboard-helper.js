@@ -9,10 +9,17 @@ function installDashboardTranscodePanel() {
   panel.className = "panel";
   panel.style.display = "none";
   panel.innerHTML = `
-    <div class="panel-header"><h2>Transkodowanie</h2><span id="dashboardTranscodeBadge" class="badge">oczekiwanie</span></div>
+    <div class="panel-header">
+      <h2>Transkodowanie</h2>
+      <div class="inline-actions">
+        <span id="dashboardTranscodeBadge" class="badge">oczekiwanie</span>
+        <button id="stopDashboardTranscodeBtn" class="danger-btn" type="button">Zatrzymaj</button>
+      </div>
+    </div>
     <div id="dashboardTranscodeStatus" class="kv-list"></div>
   `;
   settingsSummary.insertAdjacentElement("beforebegin", panel);
+  document.getElementById("stopDashboardTranscodeBtn")?.addEventListener("click", forceStopAllTranscoding);
 }
 
 async function refreshDashboardTranscodePanel() {
@@ -20,6 +27,7 @@ async function refreshDashboardTranscodePanel() {
   const panel = document.getElementById("dashboardTranscodePanel");
   const status = document.getElementById("dashboardTranscodeStatus");
   const badge = document.getElementById("dashboardTranscodeBadge");
+  const stopButton = document.getElementById("stopDashboardTranscodeBtn");
   if (!panel || !status || !badge) return;
 
   try {
@@ -29,9 +37,11 @@ async function refreshDashboardTranscodePanel() {
     const active = sessions.find((session) => ["starting", "running"].includes(session.status));
 
     updateSystemTranscodeQsvRow(active ?? sessions[0]);
+    patchSystemTranscodeStopButton();
 
     if (!active) {
       panel.style.display = "none";
+      if (stopButton) stopButton.disabled = true;
       return;
     }
 
@@ -44,6 +54,7 @@ async function refreshDashboardTranscodePanel() {
 
     badge.className = "badge running";
     badge.textContent = "transkoduje";
+    if (stopButton) stopButton.disabled = false;
     panel.style.display = "";
     status.innerHTML = `
       <div class="kv"><span>Film</span><strong>${escapeDashboardTranscodeHtml(active.title || active.streamId || "-")}</strong></div>
@@ -55,6 +66,45 @@ async function refreshDashboardTranscodePanel() {
   } catch {
     panel.style.display = "none";
   }
+}
+
+function patchSystemTranscodeStopButton() {
+  const button = document.getElementById("stopSystemTranscodeBtn");
+  if (!button || button.dataset.forceStopPatched === "1") return;
+  button.dataset.forceStopPatched = "1";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    forceStopAllTranscoding(event);
+  }, true);
+}
+
+async function forceStopAllTranscoding(event) {
+  const button = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.getElementById("stopDashboardTranscodeBtn") || document.getElementById("stopSystemTranscodeBtn");
+  const old = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = "Zatrzymuję..."; }
+  try {
+    const response = await fetch("/transcode/sessions/stop-all", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const count = Array.isArray(data.stopped) ? data.stopped.length : 0;
+    showDashboardVodToast(count > 0 ? `Zatrzymano transkodowanie (${count}).` : "Nie było aktywnego transkodowania.");
+  } catch (error) {
+    showDashboardVodToast(error instanceof Error ? error.message : "Nie udało się zatrzymać transkodowania.");
+  } finally {
+    if (button) { button.textContent = old || "Zatrzymaj"; }
+    await refreshDashboardTranscodePanel();
+    if (typeof refreshSystemTranscodePanel === "function") refreshSystemTranscodePanel();
+  }
+}
+
+function showDashboardVodToast(message) {
+  if (typeof showVodToast === "function") { showVodToast(message); return; }
+  const toast = document.getElementById("toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.remove("hidden");
+  setTimeout(() => toast.classList.add("hidden"), 3200);
 }
 
 function updateSystemTranscodeQsvRow(session) {
@@ -85,13 +135,8 @@ function renderDashboardQsvText(qsv) {
   return `CPU libx264${qsv.requestedMode && qsv.requestedMode !== "disabled" ? " · fallback z Intel" : ""}${reason ? ` · ${escapeDashboardTranscodeHtml(reason)}` : ""}`;
 }
 
-function formatDashboardSpeed(value) {
-  return Number.isFinite(value) ? `${value.toFixed(2)}x` : "-";
-}
-
-function escapeDashboardTranscodeHtml(value) {
-  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
-}
+function formatDashboardSpeed(value) { return Number.isFinite(value) ? `${value.toFixed(2)}x` : "-"; }
+function escapeDashboardTranscodeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char])); }
 
 installDashboardTranscodePanel();
 refreshDashboardTranscodePanel();
