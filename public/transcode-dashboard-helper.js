@@ -84,7 +84,11 @@ async function forceStopAllTranscoding(event) {
   const old = button?.textContent;
   if (button) { button.disabled = true; button.textContent = "Zatrzymuję..."; }
   try {
-    const response = await fetch("/transcode/sessions/stop-all", { method: "POST" });
+    const response = await fetch("/transcode/sessions/stop-all", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}"
+    });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     const count = Array.isArray(data.stopped) ? data.stopped.length : 0;
