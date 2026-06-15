@@ -73,8 +73,8 @@ function installVodTranscodeSettingsUi() {
       <label>Progresja buforu<select id="vodBufferProgression"><option value="target">Bufor ustawiony powyżej</option><option value="infinite">Nieskończony / do końca filmu</option></select></label>
       <label>Bufor zwiększający segmenty<select id="vodAdaptiveBatchEnabled"><option value="true">Włączony</option><option value="false">Wyłączony</option></select></label>
       <label id="vodFixedBatchSegmentCountLabel">Ilość segmentów w jednej paczce<input id="vodFixedBatchSegmentCount" type="number" min="1" max="100" step="1" value="2" /></label>
-      <label>Zmiana jakości segmentów<select id="vodQualityMode"><option value="disabled">Wyłączona</option><option value="enabled">Włączona</option><option value="auto">Automatyczna</option></select></label>
-      <label id="vodCrfLabel">CRF<input id="vodCrf" type="number" min="16" max="35" step="1" value="26" /></label>
+      <label>Tryb jakości VOD<select id="vodQualityMode"><option value="disabled">Wyłączony</option><option value="enabled">Stały / ręczny</option><option value="auto">Automatyczny CRF + bitrate</option></select></label>
+      <label id="vodCrfLabel">CRF bazowy<input id="vodCrf" type="number" min="16" max="35" step="1" value="26" /></label>
       <label id="vodBitrateModeLabel">Bitrate<select id="vodBitrateMode"><option value="auto">Automatyczny</option><option value="250">250 kbps</option><option value="500">500 kbps</option><option value="800">800 kbps</option><option value="1200">1200 kbps</option><option value="1800">1800 kbps</option><option value="2500">2500 kbps</option><option value="3500">3500 kbps</option><option value="5000">5000 kbps</option><option value="8000">8000 kbps</option><option value="12000">12000 kbps</option><option value="18000">18000 kbps</option></select></label>
       <label>Audio<select id="vodAudioMode"><option value="aac">AAC</option><option value="copy">Kopiuj ze źródła</option><option value="disabled">Wyłączone</option></select></label>
     </div>
@@ -112,14 +112,16 @@ function updateVodSettingsVisibility() {
   const crfLabel = document.getElementById("vodCrfLabel");
   const bitrateLabel = document.getElementById("vodBitrateModeLabel");
   const hint = document.getElementById("vodTranscodeStrategyHint");
-  for (const id of ["vodSegmentSeconds", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodQualityMode"]) {
+  for (const id of ["vodSegmentSeconds", "vodBufferProgression", "vodAdaptiveBatchEnabled"]) {
     const label = document.getElementById(id)?.closest("label");
     if (label) label.style.display = isWorker ? "none" : "";
   }
+  const qualityLabel = document.getElementById("vodQualityMode")?.closest("label");
+  if (qualityLabel) qualityLabel.style.display = mode === "vod" ? "" : "none";
   if (batchLabel) batchLabel.style.display = mode === "vod" && !adaptive && !isWorker ? "" : "none";
   if (crfLabel) crfLabel.style.display = mode === "vod" && (isWorker || qualityMode !== "auto") ? "" : "none";
   if (bitrateLabel) bitrateLabel.style.display = mode === "vod" && (isWorker || qualityMode !== "auto") ? "" : "none";
-  if (hint) hint.textContent = strategy === "worker_v2" ? "Worker v2: dynamiczna playlista EVENT, stabilniejsza dla jednego długiego FFmpeg, ale mniej klasyczna dla pełnego timeline." : strategy === "worker" ? "Worker: pełna playlista VOD, segmenty powstają do przodu jednym długim FFmpeg od aktualnego miejsca." : "Paczki: obecny tryb, lepszy do częstego przewijania, ale może mieć przerwy między paczkami.";
+  if (hint) hint.textContent = strategy === "worker_v2" ? "Worker v2: dynamiczna playlista EVENT, stabilniejsza dla jednego długiego FFmpeg, ale mniej klasyczna dla pełnego timeline." : strategy === "worker" ? "Worker: pełna playlista VOD, segmenty powstają do przodu jednym długim FFmpeg od aktualnego miejsca. Tryb jakości Auto dostraja CRF i bitrate dla kolejnych segmentów, celując w ok. 1.15x." : "Paczki: obecny tryb, lepszy do częstego przewijania, ale może mieć przerwy między paczkami.";
 }
 
 async function refreshIntelQsvStatus() {
