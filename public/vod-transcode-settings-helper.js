@@ -23,6 +23,7 @@ window.fetch = async (input, init = {}) => {
   if (url === "/admin/settings" && method === "PATCH" && init.body) {
     try {
       const body = JSON.parse(String(init.body));
+      ensureVodQualityModeField();
       for (const field of VOD_SETTING_FIELDS) {
         const element = document.getElementById(field);
         if (!element) continue;
@@ -40,7 +41,8 @@ window.fetch = async (input, init = {}) => {
 
 function installVodTranscodeSettingsUi() {
   const liveAnchor = document.getElementById("defaultTranscodeBufferPreset");
-  if (!liveAnchor || document.getElementById("transcodeMode")) return;
+  if (!liveAnchor) return;
+  if (document.getElementById("transcodeMode")) { ensureVodQualityModeField(); updateVodSettingsVisibility(); return; }
   const panel = liveAnchor.closest("article");
   const form = liveAnchor.closest(".settings-form");
   if (!panel || !form) return;
@@ -86,7 +88,18 @@ function installVodTranscodeSettingsUi() {
   updateVodSettingsVisibility();
 }
 
+function ensureVodQualityModeField() {
+  if (document.getElementById("vodQualityMode")) return;
+  const crfLabel = document.getElementById("vodCrf")?.closest("label");
+  const bitrateLabel = document.getElementById("vodBitrateMode")?.closest("label");
+  const anchor = crfLabel ?? bitrateLabel;
+  if (!anchor) return;
+  anchor.insertAdjacentHTML("beforebegin", `<label>Tryb jakości VOD<select id="vodQualityMode"><option value="disabled">Wyłączony</option><option value="enabled">Stały / ręczny</option><option value="auto">Automatyczny CRF + bitrate</option></select></label>`);
+  document.getElementById("vodQualityMode")?.addEventListener("change", updateVodSettingsVisibility);
+}
+
 function fillVodTranscodeSettings(settings) {
+  ensureVodQualityModeField();
   const defaults = { transcodeMode: "vod", liveIntelQsvMode: "disabled", vodIntelQsvMode: "disabled", vodTranscodeStrategy: "batch", vodSegmentSeconds: 10, vodStartupBufferSeconds: 60, vodBufferProgression: "infinite", vodAdaptiveBatchEnabled: false, vodFixedBatchSegmentCount: 12, vodQualityMode: "auto", vodCrf: 26, vodBitrateMode: "auto", vodAudioMode: "aac" };
   for (const field of VOD_SETTING_FIELDS) {
     const element = document.getElementById(field);
@@ -99,6 +112,7 @@ function fillVodTranscodeSettings(settings) {
 }
 
 function updateVodSettingsVisibility() {
+  ensureVodQualityModeField();
   const mode = document.getElementById("transcodeMode")?.value ?? "vod";
   const live = document.getElementById("liveTranscodeSettingsBlock");
   const vod = document.getElementById("vodTranscodeSettingsBlock");
@@ -109,8 +123,8 @@ function updateVodSettingsVisibility() {
   const adaptive = document.getElementById("vodAdaptiveBatchEnabled")?.value !== "false";
   const qualityMode = document.getElementById("vodQualityMode")?.value ?? "auto";
   const batchLabel = document.getElementById("vodFixedBatchSegmentCountLabel");
-  const crfLabel = document.getElementById("vodCrfLabel");
-  const bitrateLabel = document.getElementById("vodBitrateModeLabel");
+  const crfLabel = document.getElementById("vodCrfLabel") ?? document.getElementById("vodCrf")?.closest("label");
+  const bitrateLabel = document.getElementById("vodBitrateModeLabel") ?? document.getElementById("vodBitrateMode")?.closest("label");
   const hint = document.getElementById("vodTranscodeStrategyHint");
   for (const id of ["vodSegmentSeconds", "vodBufferProgression", "vodAdaptiveBatchEnabled"]) {
     const label = document.getElementById(id)?.closest("label");
