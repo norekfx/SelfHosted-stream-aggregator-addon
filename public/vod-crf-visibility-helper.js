@@ -12,14 +12,12 @@ function applyVodTranscodeStrategy() {
   const progression = document.getElementById("vodBufferProgression");
   const adaptive = document.getElementById("vodAdaptiveBatchEnabled");
   const batch = document.getElementById("vodFixedBatchSegmentCount");
-  const qualityMode = document.getElementById("vodQualityMode");
   const segmentSeconds = document.getElementById("vodSegmentSeconds");
 
   if (strategy === "worker") {
     if (progression) progression.value = "infinite";
     if (adaptive) adaptive.value = "false";
     if (batch) batch.value = "100";
-    if (qualityMode && qualityMode.value === "auto") qualityMode.value = "disabled";
     if (segmentSeconds) segmentSeconds.value = "6";
   }
 }
@@ -29,7 +27,7 @@ function installVodTranscodeStrategyUi() {
   const qsvLabel = document.getElementById("vodIntelQsvMode")?.closest("label");
   if (!vodBlock || !qsvLabel || document.getElementById("vodTranscodeStrategy")) return;
   qsvLabel.insertAdjacentHTML("beforebegin", `
-    <label>Sposób transkodowania VOD<select id="vodTranscodeStrategy"><option value="batch">Paczki / seek-friendly</option><option value="worker">Worker / ciągłe dogenerowywanie</option></select></label>
+    <label>Sposób transkodowania VOD<select id="vodTranscodeStrategy"><option value="batch">Paczki / seek-friendly</option><option value="worker">Worker / pełna playlista VOD</option></select></label>
     <p id="vodTranscodeStrategyHint" class="hint"></p>
   `);
   const select = document.getElementById("vodTranscodeStrategy");
@@ -45,26 +43,28 @@ function updateVodTranscodeStrategyVisibility() {
   const isVod = transcodeMode === "vod";
   const isWorker = isVod && strategy === "worker";
   const qualityMode = document.getElementById("vodQualityMode")?.value ?? "auto";
-  const crfLabel = document.getElementById("vodCrfLabel");
-  const bitrateLabel = document.getElementById("vodBitrateModeLabel");
+  const crfLabel = document.getElementById("vodCrfLabel") ?? document.getElementById("vodCrf")?.closest("label");
+  const bitrateLabel = document.getElementById("vodBitrateModeLabel") ?? document.getElementById("vodBitrateMode")?.closest("label");
+  const qualityLabel = document.getElementById("vodQualityMode")?.closest("label");
   const hint = document.getElementById("vodTranscodeStrategyHint");
 
-  const batchOnlyIds = ["vodSegmentSeconds", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodFixedBatchSegmentCount", "vodQualityMode"];
-  for (const id of batchOnlyIds) {
+  const workerHiddenIds = ["vodSegmentSeconds", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodFixedBatchSegmentCount"];
+  for (const id of workerHiddenIds) {
     const label = document.getElementById(id)?.closest("label");
     if (label) label.style.display = isWorker ? "none" : "";
   }
 
+  if (qualityLabel) qualityLabel.style.display = isVod ? "" : "none";
   if (crfLabel) crfLabel.style.display = isVod && (isWorker || qualityMode !== "auto") ? "" : "none";
   if (bitrateLabel) bitrateLabel.style.display = isVod && (isWorker || qualityMode !== "auto") ? "" : "none";
   if (hint) hint.textContent = isWorker
-    ? "Worker: po buforze startowym FFmpeg dostaje długą paczkę do przodu. Cel: mniej restartów FFmpeg i bardziej ciągłe użycie CPU/iGPU."
+    ? "Worker: pełna playlista VOD, segmenty powstają do przodu jednym długim FFmpeg od aktualnego miejsca. Tryb jakości Auto dostraja CRF i bitrate dla kolejnych segmentów, celując w ok. 1.15x."
     : "Paczki: obecny tryb, lepszy do częstego przewijania, ale może mieć przerwy między paczkami.";
 }
 
 function installVodCrfVisibilityForManualQuality() {
   updateVodTranscodeStrategyVisibility();
-  for (const id of ["transcodeMode", "vodQualityMode", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodFixedBatchSegmentCount"]) {
+  for (const id of ["transcodeMode", "vodQualityMode", "vodBufferProgression", "vodAdaptiveBatchEnabled", "vodFixedBatchSegmentCount", "vodTranscodeStrategy"]) {
     const element = document.getElementById(id);
     if (element && element.dataset.vodCrfVisibilityBound !== "true") {
       element.dataset.vodCrfVisibilityBound = "true";
