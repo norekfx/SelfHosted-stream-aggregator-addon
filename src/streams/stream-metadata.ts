@@ -24,6 +24,7 @@ export type ReleaseSource =
   | "unknown";
 
 export type VideoCodec = "AV1" | "HEVC" | "H264" | "XVID" | "MPEG2" | "unknown";
+export type AudioCodec = "AAC" | "AC3" | "EAC3" | "DTS" | "TrueHD" | "FLAC" | "MP3" | "Opus" | "Vorbis" | "PCM" | "unknown";
 
 export type AudioKind = "original" | "lektor" | "dubbing" | "subbed" | "multi" | "unknown";
 
@@ -31,6 +32,7 @@ export type NormalizedStreamMetadata = {
   quality: NormalizedQuality;
   source: ReleaseSource;
   videoCodec: VideoCodec;
+  audioCodec: AudioCodec;
   audioLanguage?: string;
   subtitleLanguage?: string;
   audioKind: AudioKind;
