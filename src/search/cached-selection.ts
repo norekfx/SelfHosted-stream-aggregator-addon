@@ -92,15 +92,22 @@ function toAggregatedStream(type: StreamType, id: string, selectedOriginal: NonN
     return null;
   }
 
+  const fileName = typeof selectedOriginal.behaviorHints?.filename === "string"
+    ? selectedOriginal.behaviorHints.filename
+    : selectedOriginal.title ?? selectedOriginal.name ?? "Selected original stream";
+
   return {
     id: createStableOriginalId(selectedOriginal.addonId, type, id, originalUrl),
     name: "Original",
-    title: selectedOriginal.title ?? selectedOriginal.name ?? "Selected original stream",
+    title: selectedOriginal.title ?? selectedOriginal.name ?? fileName,
+    description: selectedOriginal.description,
     sourceAddon: selectedOriginal.addonName,
     originalUrl,
     quality: selectedOriginal.metadata.quality,
     audioLanguage: selectedOriginal.metadata.audioLanguage,
     subtitleLanguage: selectedOriginal.metadata.subtitleLanguage,
+    fileName,
+    metadata: selectedOriginal.metadata,
     isValidated: true,
     validationStatus: "working",
     validationReason: selectedOriginal.scoreReasons.join("; ")
