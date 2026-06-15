@@ -1,5 +1,5 @@
 import { EUROPEAN_LANGUAGES } from "../languages/european-languages.js";
-import type { AudioKind, NormalizedQuality, NormalizedStreamMetadata, ReleaseSource, VideoCodec } from "./stream-metadata.js";
+import type { AudioCodec, AudioKind, NormalizedQuality, NormalizedStreamMetadata, ReleaseSource, VideoCodec } from "./stream-metadata.js";
 
 const qualityPatterns: Array<[RegExp, NormalizedQuality]> = [
   [/\b(4k|uhd|ultra\s*hd)\b/i, "4k"],
@@ -35,6 +35,19 @@ const codecPatterns: Array<[RegExp, VideoCodec]> = [
   [/\bmpeg[- .]?2\b/i, "MPEG2"]
 ];
 
+const audioCodecPatterns: Array<[RegExp, AudioCodec]> = [
+  [/\b(e[- .]?ac[- .]?3|eac3|ddp|dd\+|dolby\s*digital\s*plus)\b/i, "EAC3"],
+  [/\b(ac[- .]?3|ac3|dolby\s*digital)\b/i, "AC3"],
+  [/\b(truehd|true\s*hd)\b/i, "TrueHD"],
+  [/\b(dts[- .]?hd|dts)\b/i, "DTS"],
+  [/\bflac\b/i, "FLAC"],
+  [/\b(aac|m4a)\b/i, "AAC"],
+  [/\bmp3\b/i, "MP3"],
+  [/\bopus\b/i, "Opus"],
+  [/\bvorbis\b/i, "Vorbis"],
+  [/\b(pcm|lpcm)\b/i, "PCM"]
+];
+
 const sizePattern = /\b\d+(?:[.,]\d+)?\s*(?:gb|gib|mb|mib)\b/i;
 
 export function parseStreamMetadata(input: { name?: string; title?: string; filename?: string; description?: string }): NormalizedStreamMetadata {
@@ -45,6 +58,7 @@ export function parseStreamMetadata(input: { name?: string; title?: string; file
   const quality = firstPatternMatch(normalized, qualityPatterns, matchedTokens) ?? inferQualityFromSize(normalized, matchedTokens) ?? "unknown";
   const source = firstPatternMatch(normalized, sourcePatterns, matchedTokens) ?? "unknown";
   const videoCodec = firstPatternMatch(normalized, codecPatterns, matchedTokens) ?? "unknown";
+  const audioCodec = firstPatternMatch(normalized, audioCodecPatterns, matchedTokens) ?? "unknown";
   const size = normalized.match(sizePattern)?.[0];
   if (size) matchedTokens.push(size);
 
@@ -63,6 +77,7 @@ export function parseStreamMetadata(input: { name?: string; title?: string; file
     quality,
     source,
     videoCodec,
+    audioCodec,
     audioLanguage,
     subtitleLanguage,
     audioKind,
