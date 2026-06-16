@@ -20,6 +20,7 @@ const vodSegmentParamsSchema = vodParamsSchema.extend({ segment: z.string().rege
 const VOD_AUTO_MIN_SPEED = 1.10;
 const VOD_AUTO_TARGET_SPEED = 1.15;
 const VOD_WORKER_SEGMENT_WAIT_MS = 120_000;
+const VOD_WORKER_SEEK_SEGMENT_COUNT = 12;
 
 type VodProgress = { frame?: number; fps?: number; bitrate?: string; outTime?: string; speed?: string; progress?: string };
 type VodStatus = "starting" | "running" | "exited" | "failed";
@@ -110,8 +111,11 @@ async function generateVodSegment(session: VodSession, segmentName: string): Pro
   const segmentIndex = parseSegmentIndex(segmentName);
   if (session.strategy === "batch") return generateVodSegmentBatch(session, segmentIndex, getVodBatchSegmentCount(session));
   const segmentPath = join(session.outputDir, segmentName);
-  if (!existsSync(segmentPath) && shouldRestartWorkerForRequestedSegment(session, segmentIndex)) resetVodWorkerForSeek(session, segmentIndex);
-  prewarmVodSegments(session, segmentIndex, getWorkerSegmentCount(session, segmentIndex));
+  const shouldRestart = !existsSync(segmentPath) && shouldRestartWorkerForRequestedSegment(session, segmentIndex);
+  if (shouldRestart) resetVodWorkerForSeek(session, segmentIndex);
+  const initialSeek = !existsSync(segmentPath) && (!session.activeProcess || shouldRestart);
+  const segmentCount = initialSeek ? getWorkerSeekSegmentCount(session, segmentIndex) : getWorkerSegmentCount(session, segmentIndex);
+  prewarmVodSegments(session, segmentIndex, segmentCount);
   await waitForSegmentFile(session, segmentName, VOD_WORKER_SEGMENT_WAIT_MS);
 }
 
@@ -138,6 +142,7 @@ function parseVodProgress(session: VodSession, text: string): void { const progr
 function updateVodSpeedStats(session: VodSession, rawSpeed: string): void { const speed = Number.parseFloat(rawSpeed.replace(/x$/i, "")); if (!Number.isFinite(speed) || speed <= 0) return; const stats = session.speedStats ?? { samples: 0 }; const samples = stats.samples + 1; const previousAverage = stats.average ?? speed; stats.samples = samples; stats.average = ((previousAverage * (samples - 1)) + speed) / samples; stats.min = stats.min === undefined ? speed : Math.min(stats.min, speed); stats.max = stats.max === undefined ? speed : Math.max(stats.max, speed); session.speedStats = stats; }
 function getVodBatchSegmentCount(session: VodSession): number { if (session.strategy !== "batch") return getWorkerSegmentCount(session, 0); const settings = getEffectiveTranscodeSettings(); if (!settings.vodAdaptiveBatchEnabled) return Math.min(getSegmentCount(session), Math.max(1, settings.vodFixedBatchSegmentCount)); const generatedSeconds = countGeneratedSegments(session) * session.segmentSeconds; const step = Math.max(1, Math.floor(generatedSeconds / 120)); return Math.min(getSegmentCount(session), Math.max(2, step * 4)); }
 function getWorkerSegmentCount(session: VodSession, startIndex: number): number { return Math.max(1, getSegmentCount(session) - Math.max(0, startIndex)); }
+function getWorkerSeekSegmentCount(session: VodSession, startIndex: number): number { return Math.max(1, Math.min(VOD_WORKER_SEEK_SEGMENT_COUNT, getSegmentCount(session) - Math.max(0, startIndex))); }
 function getVodPrewarmSegmentCount(session: VodSession): number { const settings = getEffectiveTranscodeSettings(); if (settings.vodBufferProgression === "infinite") return getSegmentCount(session); if (session.targetBufferSeconds <= 0) return 0; return Math.min(getSegmentCount(session), Math.ceil(session.targetBufferSeconds / session.segmentSeconds)); }
 function findFirstMissingSegmentIndex(session: VodSession, startIndex: number, endIndex: number): number | undefined { for (let index = Math.max(0, startIndex); index <= endIndex; index += 1) { const segmentName = `segment_${String(index).padStart(5, "0")}.ts`; if (!existsSync(join(session.outputDir, segmentName))) return index; } return undefined; }
 function getGeneratedSegmentIndexes(session: VodSession): number[] { try { return readdirSync(session.outputDir).map((file) => file.match(/^segment_(\d{5})\.ts$/)?.[1]).filter((value): value is string => Boolean(value)).map((value) => Number.parseInt(value, 10)).filter((value) => Number.isFinite(value)).sort((a, b) => a - b); } catch { return []; } }
