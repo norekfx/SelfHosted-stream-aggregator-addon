@@ -12,7 +12,12 @@
     rows.forEach((row, index) => {
       const actionRow = row.querySelector('td:last-child .action-row');
       const id = actionRow?.querySelector('[data-test-library]')?.dataset.testLibrary;
-      if (!actionRow || !id || actionRow.hasAttribute(MARKER)) return;
+      if (!actionRow || !id) return;
+      const library = byId.get(id);
+      const firstCell = row.querySelector('td:first-child');
+      const label = firstCell?.querySelector('[data-sort-order-label]');
+      if (label && library) label.textContent = `Kolejność: ${Number(library.sortOrder ?? index + 1)}`;
+      if (actionRow.hasAttribute(MARKER)) return;
       actionRow.setAttribute(MARKER, 'true');
       const group = document.createElement('span');
       group.className = 'inline-actions';
@@ -23,8 +28,8 @@
       const down = group.querySelector('[data-move-library="down"]');
       if (up) up.disabled = index === 0;
       if (down) down.disabled = index === rows.length - 1;
-      up?.addEventListener('click', () => moveLibrary(id, -1, byId));
-      down?.addEventListener('click', () => moveLibrary(id, 1, byId));
+      up?.addEventListener('click', () => moveLibrary(id, -1));
+      down?.addEventListener('click', () => moveLibrary(id, 1));
       actionRow.prepend(group);
       const retryButton = document.createElement('button');
       retryButton.className = 'small-btn';
@@ -34,38 +39,48 @@
       retryButton.addEventListener('click', () => retryMissingAnimeSub(id, retryButton));
       const deleteButton = actionRow.querySelector('[data-delete-library]');
       if (deleteButton) actionRow.insertBefore(retryButton, deleteButton); else actionRow.appendChild(retryButton);
-      const firstCell = row.querySelector('td:first-child');
-      const library = byId.get(id);
-      if (firstCell && library && !firstCell.querySelector('[data-sort-order-label]')) {
-        const label = document.createElement('small');
-        label.dataset.sortOrderLabel = 'true';
-        label.textContent = `Kolejność: ${Number(library.sortOrder ?? index)}`;
+      if (firstCell && !firstCell.querySelector('[data-sort-order-label]')) {
+        const newLabel = document.createElement('small');
+        newLabel.dataset.sortOrderLabel = 'true';
+        newLabel.textContent = `Kolejność: ${Number(library?.sortOrder ?? index + 1)}`;
         firstCell.appendChild(document.createElement('br'));
-        firstCell.appendChild(label);
+        firstCell.appendChild(newLabel);
       }
     });
   }
 
-  async function moveLibrary(id, direction, byId) {
+  async function moveLibrary(id, direction) {
     if (busy) return;
-    const libraries = Array.from(byId.values()).sort(compareLibraries);
+    const libraries = await getLibraries().catch(() => []);
     const index = libraries.findIndex((library) => library.id === id);
-    const other = libraries[index + direction];
-    const current = libraries[index];
-    if (!current || !other) return;
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= libraries.length) return;
+    const reordered = libraries.slice();
+    const [current] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, current);
     busy = true;
     try {
-      const currentOrder = normalizedOrder(current, index);
-      const otherOrder = normalizedOrder(other, index + direction);
-      await Promise.all([
-        apiRequest(`/admin/libraries/${encodeURIComponent(current.id)}`, { method: 'PATCH', body: { sortOrder: otherOrder } }),
-        apiRequest(`/admin/libraries/${encodeURIComponent(other.id)}`, { method: 'PATCH', body: { sortOrder: currentOrder } })
-      ]);
+      const data = await apiRequest('/admin/libraries/reorder', { method: 'POST', body: { orderedIds: reordered.map((library) => library.id) } });
       showToast('Zmieniono kolejność bibliotek.');
+      updateRowsOptimistically(data.libraries || reordered);
       document.querySelector('#reloadLibrariesBtn')?.click();
       setTimeout(() => document.querySelector('#reloadLibraryPreviewBtn')?.click(), 600);
     } catch (error) { showToast(error instanceof Error ? error.message : 'Nie udało się zmienić kolejności bibliotek.'); }
     finally { busy = false; }
+  }
+
+  function updateRowsOptimistically(libraries) {
+    const tbody = document.querySelector('#librariesList tbody');
+    if (!tbody) return;
+    const rowById = new Map(Array.from(tbody.querySelectorAll('tr')).map((row) => {
+      const id = row.querySelector('[data-test-library]')?.dataset.testLibrary;
+      return [id, row];
+    }));
+    libraries.slice().sort(compareLibraries).forEach((library) => {
+      const row = rowById.get(library.id);
+      if (row) tbody.appendChild(row);
+    });
+    setTimeout(installReorderControls, 50);
   }
 
   async function retryMissingAnimeSub(id, button) {
@@ -84,7 +99,6 @@
   }
 
   function compareLibraries(a, b) { const orderDiff = Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0); if (orderDiff) return orderDiff; return String(a.name || '').localeCompare(String(b.name || '')); }
-  function normalizedOrder(library, fallback) { const value = Number(library.sortOrder); return Number.isFinite(value) ? value : fallback; }
   async function getLibraries() { const data = await apiRequest('/admin/libraries'); return (data.libraries || []).slice().sort(compareLibraries); }
   async function apiRequest(path, options = {}) { const response = await fetch(path, { method: options.method || 'GET', headers: options.body !== undefined ? { 'content-type': 'application/json', accept: 'application/json' } : undefined, body: options.body !== undefined ? JSON.stringify(options.body) : undefined }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`); return data; }
   function showToast(message) { const el = document.querySelector('#toast'); if (!el) return; el.textContent = message; el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 3200); }
