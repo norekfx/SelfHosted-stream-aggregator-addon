@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDatabase } from "../db/database.js";
-import type { Library, LibraryConfig, LibraryInput, LibraryMediaType, LibraryMode } from "./types.js";
+import type { Library, LibraryConfig, LibraryInput, LibraryMediaType, LibraryMode, LibraryReorderInput } from "./types.js";
 
 const DOCCHI_AUTOMATION_MODES = new Set(["inherit", "disabled", "animation_series", "series", "all"]);
 const ANIMESUB_AUTOMATION_MODES = new Set(["manual", "24h", "3d", "7d", "14d", "30d"]);
@@ -10,6 +10,7 @@ const AUTOMATION_INTERVALS = new Set([24, 72, 168, 336, 720]);
 type LibraryRow = { id: string; name: string; slug: string; type: LibraryMediaType; source: "tmdb"; mode: LibraryMode; enabled: 0 | 1; sort_order: number; config_json: string; created_at: string; updated_at: string };
 
 export function listLibraries(includeDisabled = true): Library[] {
+  normalizeLibrarySortOrderIfNeeded();
   const sql = includeDisabled ? "SELECT * FROM libraries ORDER BY sort_order ASC, created_at ASC" : "SELECT * FROM libraries WHERE enabled = 1 ORDER BY sort_order ASC, created_at ASC";
   const rows = getDatabase().prepare(sql).all() as LibraryRow[];
   return rows.map(mapLibraryRow);
@@ -20,9 +21,11 @@ export function getLibraryForCatalog(type: LibraryMediaType, idOrSlug: string): 
 
 export function createLibrary(input: LibraryInput): Library {
   const now = new Date().toISOString();
-  const library: Library = { id: randomUUID(), name: input.name.trim(), slug: normalizeSlug(input.slug || input.name), type: input.type, source: input.source ?? "tmdb", mode: input.mode, enabled: input.enabled ?? true, sortOrder: input.sortOrder ?? 0, config: sanitizeConfig(input.config ?? {}), createdAt: now, updatedAt: now };
+  const sortOrder = input.sortOrder ?? getNextSortOrder();
+  const library: Library = { id: randomUUID(), name: input.name.trim(), slug: normalizeSlug(input.slug || input.name), type: input.type, source: input.source ?? "tmdb", mode: input.mode, enabled: input.enabled ?? true, sortOrder, config: sanitizeConfig(input.config ?? {}), createdAt: now, updatedAt: now };
   getDatabase().prepare(`INSERT INTO libraries (id, name, slug, type, source, mode, enabled, sort_order, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(library.id, library.name, library.slug, library.type, library.source, library.mode, library.enabled ? 1 : 0, library.sortOrder, JSON.stringify(library.config), library.createdAt, library.updatedAt);
-  return library;
+  normalizeLibrarySortOrderIfNeeded();
+  return getLibrary(library.id) ?? library;
 }
 
 export function updateLibrary(idOrSlug: string, input: Partial<LibraryInput>): Library | undefined {
@@ -32,8 +35,25 @@ export function updateLibrary(idOrSlug: string, input: Partial<LibraryInput>): L
   getDatabase().prepare(`UPDATE libraries SET name = ?, slug = ?, type = ?, source = ?, mode = ?, enabled = ?, sort_order = ?, config_json = ?, updated_at = ? WHERE id = ?`).run(updated.name, updated.slug, updated.type, updated.source, updated.mode, updated.enabled ? 1 : 0, updated.sortOrder, JSON.stringify(updated.config), updated.updatedAt, current.id);
   return updated;
 }
-export function deleteLibrary(idOrSlug: string): boolean { const library = getLibrary(idOrSlug); if (!library) return false; const db = getDatabase(); db.transaction(() => { db.prepare("DELETE FROM library_cache WHERE library_id = ?").run(library.id); db.prepare("DELETE FROM libraries WHERE id = ?").run(library.id); })(); return true; }
 
+export function reorderLibraries(input: LibraryReorderInput): Library[] {
+  const orderedIds = Array.from(new Set(input.orderedIds.filter(Boolean)));
+  const current = listLibraries(true);
+  const ids = new Set(current.map((library) => library.id));
+  const finalOrder = [...orderedIds.filter((id) => ids.has(id)), ...current.map((library) => library.id).filter((id) => !orderedIds.includes(id))];
+  const now = new Date().toISOString();
+  const db = getDatabase();
+  const update = db.prepare("UPDATE libraries SET sort_order = ?, updated_at = ? WHERE id = ?");
+  db.transaction(() => {
+    finalOrder.forEach((id, index) => update.run(index + 1, now, id));
+  })();
+  return listLibraries(true);
+}
+
+export function deleteLibrary(idOrSlug: string): boolean { const library = getLibrary(idOrSlug); if (!library) return false; const db = getDatabase(); db.transaction(() => { db.prepare("DELETE FROM library_cache WHERE library_id = ?").run(library.id); db.prepare("DELETE FROM libraries WHERE id = ?").run(library.id); })(); normalizeLibrarySortOrderIfNeeded(); return true; }
+
+function getNextSortOrder(): number { const row = getDatabase().prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM libraries").get() as { next: number } | undefined; return Number(row?.next ?? 1); }
+function normalizeLibrarySortOrderIfNeeded(): void { const rows = getDatabase().prepare("SELECT id, sort_order, created_at, name FROM libraries ORDER BY sort_order ASC, created_at ASC, name ASC").all() as Array<{ id: string; sort_order: number; created_at: string; name: string }>; if (!rows.length) return; const needsNormalize = rows.some((row, index) => row.sort_order !== index + 1) || new Set(rows.map((row) => row.sort_order)).size !== rows.length; if (!needsNormalize) return; const now = new Date().toISOString(); const update = getDatabase().prepare("UPDATE libraries SET sort_order = ?, updated_at = ? WHERE id = ?"); getDatabase().transaction(() => { rows.forEach((row, index) => update.run(index + 1, now, row.id)); })(); }
 function mapLibraryRow(row: LibraryRow): Library { return { id: row.id, name: row.name, slug: row.slug, type: row.type, source: row.source, mode: row.mode, enabled: row.enabled === 1, sortOrder: row.sort_order, config: safeParseConfig(row.config_json), createdAt: row.created_at, updatedAt: row.updated_at }; }
 function safeParseConfig(value: string): LibraryConfig { try { const parsed = JSON.parse(value) as unknown; return sanitizeConfig(typeof parsed === "object" && parsed !== null ? parsed as LibraryConfig : {}); } catch { return {}; } }
 
