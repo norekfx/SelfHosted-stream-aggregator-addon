@@ -1,6 +1,25 @@
 const transcodeCacheState = { cache: null };
 
+function installTranscodeCachePanelStyles() {
+  if (document.getElementById("transcodeCachePanelStyles")) return;
+  const style = document.createElement("style");
+  style.id = "transcodeCachePanelStyles";
+  style.textContent = `
+    .transcode-cache-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:12px; }
+    .transcode-cache-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .transcode-cache-card { display:grid; grid-template-columns:72px 1fr; gap:12px; padding:12px; border:1px solid rgba(148,163,184,.25); border-radius:14px; background:rgba(15,23,42,.35); }
+    .transcode-cache-poster { width:72px; height:104px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:22px; background:linear-gradient(135deg,rgba(59,130,246,.4),rgba(168,85,247,.35)); color:white; }
+    .transcode-cache-body { min-width:0; display:flex; flex-direction:column; gap:6px; }
+    .transcode-cache-body strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .transcode-cache-body small { color:var(--muted,#94a3b8); line-height:1.35; }
+    .transcode-cache-progress { height:10px; overflow:hidden; border-radius:999px; background:rgba(148,163,184,.22); }
+    .transcode-cache-progress span { display:block; height:100%; background:linear-gradient(90deg,#22c55e,#3b82f6); border-radius:999px; }
+  `;
+  document.head.appendChild(style);
+}
+
 function installTranscodeCachePanel() {
+  installTranscodeCachePanelStyles();
   const nav = document.querySelector(".nav");
   const settingsButton = document.querySelector('.nav-item[data-view="settings"]');
   const main = document.querySelector(".main");
@@ -97,7 +116,6 @@ function renderTranscodeCachePanel() {
   document.getElementById("transcodeCacheBreakdown").textContent = `filmy: ${cache.movieCount ?? 0}, odcinki: ${cache.episodeCount ?? 0}`;
   const limitInput = document.getElementById("transcodeCacheLimitGb");
   if (limitInput) limitInput.value = String(cache.limitGb ?? 50);
-
   const container = document.getElementById("transcodeCacheItems");
   if (!container) return;
   if (!items.length) { container.innerHTML = '<div class="list empty">Cache transkodowania jest pusty.</div>'; return; }
@@ -110,42 +128,12 @@ function renderTranscodeCacheItem(item) {
   const generated = item.totalSegments ? `${item.segmentCount}/${item.totalSegments} segmentów` : `${item.segmentCount ?? 0} segmentów`;
   const seconds = item.totalSeconds ? ` · ${formatTranscodeCacheDuration(item.generatedSeconds ?? 0)} / ${formatTranscodeCacheDuration(item.totalSeconds)}` : "";
   const quality = [item.mode?.toUpperCase(), item.quality, item.sourceQuality, item.strategy].filter(Boolean).join(" • ") || "-";
-  return `
-    <article class="transcode-cache-card">
-      <div class="transcode-cache-poster">${escapeTranscodeCacheHtml(getTranscodeCacheInitials(title))}</div>
-      <div class="transcode-cache-body">
-        <strong>${escapeTranscodeCacheHtml(title)}</strong>
-        <small>${escapeTranscodeCacheHtml(quality)}</small>
-        <div class="transcode-cache-progress" title="${percent}%"><span style="width:${Math.max(0, Math.min(100, percent))}%"></span></div>
-        <small>Przetranskodowano: ${escapeTranscodeCacheHtml(generated)}${escapeTranscodeCacheHtml(seconds)}</small>
-        <small>Rozmiar: ${formatTranscodeCacheBytes(item.sizeBytes ?? 0)} · aktualizacja: ${escapeTranscodeCacheHtml(formatTranscodeCacheDate(item.lastModifiedAt))}</small>
-      </div>
-    </article>`;
+  return `<article class="transcode-cache-card"><div class="transcode-cache-poster">${escapeTranscodeCacheHtml(getTranscodeCacheInitials(title))}</div><div class="transcode-cache-body"><strong>${escapeTranscodeCacheHtml(title)}</strong><small>${escapeTranscodeCacheHtml(quality)}</small><div class="transcode-cache-progress" title="${percent}%"><span style="width:${Math.max(0, Math.min(100, percent))}%"></span></div><small>Przetranskodowano: ${escapeTranscodeCacheHtml(generated)}${escapeTranscodeCacheHtml(seconds)}</small><small>Rozmiar: ${formatTranscodeCacheBytes(item.sizeBytes ?? 0)} · aktualizacja: ${escapeTranscodeCacheHtml(formatTranscodeCacheDate(item.lastModifiedAt))}</small></div></article>`;
 }
 
-async function transcodeCacheApi(path, options = {}) {
-  const response = await fetch(path, { method: options.method ?? "GET", headers: options.body ? { "content-type": "application/json" } : undefined, body: options.body ? JSON.stringify(options.body) : undefined });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
-}
-
-function formatTranscodeCacheBytes(bytes) {
-  const value = Number(bytes) || 0;
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${value} B`;
-}
-
-function formatTranscodeCacheDuration(seconds) {
-  const value = Math.max(0, Math.round(Number(seconds) || 0));
-  const h = Math.floor(value / 3600);
-  const m = Math.floor((value % 3600) / 60);
-  const s = value % 60;
-  return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
-}
-
+async function transcodeCacheApi(path, options = {}) { const response = await fetch(path, { method: options.method ?? "GET", headers: options.body ? { "content-type": "application/json" } : undefined, body: options.body ? JSON.stringify(options.body) : undefined }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); return data; }
+function formatTranscodeCacheBytes(bytes) { const value = Number(bytes) || 0; if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`; if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`; if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`; return `${value} B`; }
+function formatTranscodeCacheDuration(seconds) { const value = Math.max(0, Math.round(Number(seconds) || 0)); const h = Math.floor(value / 3600); const m = Math.floor((value % 3600) / 60); const s = value % 60; return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`; }
 function formatTranscodeCacheDate(value) { return value ? new Date(value).toLocaleString() : "-"; }
 function getTranscodeCacheInitials(value) { return String(value || "T").split(/\s+/).slice(0, 2).map((part) => part[0] ?? "").join("").toUpperCase() || "T"; }
 function escapeTranscodeCacheHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char])); }
