@@ -63,6 +63,7 @@ export type AppSettings = {
   vodCrf: number;
   vodBitrateMode: VodBitrateMode;
   vodAudioMode: VodAudioMode;
+  transcodeCacheLimitGb: number;
 };
 
 const validLanguageCodes = new Set(EUROPEAN_LANGUAGES.map((language) => language.code));
@@ -128,7 +129,8 @@ const defaults: AppSettings = {
   vodQualityMode: "auto",
   vodCrf: 26,
   vodBitrateMode: "auto",
-  vodAudioMode: "aac"
+  vodAudioMode: "aac",
+  transcodeCacheLimitGb: 50
 };
 
 export function getAppSettings(): AppSettings {
@@ -138,7 +140,7 @@ export function getAppSettings(): AppSettings {
 
   const settings = { ...defaults };
   for (const row of rows) {
-    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb", "metadataSyncIntervalMinutes", "vodSegmentSeconds", "vodStartupBufferSeconds", "vodFixedBatchSegmentCount", "vodCrf"].includes(row.key)) {
+    if (["streamValidationTimeoutMs", "maxTranscodeSessions", "transcodeCrfMin", "transcodeCrfMax", "transcodeBitrateMinKbps", "transcodeBitrateMaxKbps", "debridPlaceholderMinSizeMb", "debridPlaceholderMinDurationMinutes", "debridPlaceholderSizeDifferenceGb", "metadataSyncIntervalMinutes", "vodSegmentSeconds", "vodStartupBufferSeconds", "vodFixedBatchSegmentCount", "vodCrf", "transcodeCacheLimitGb"].includes(row.key)) {
       const parsed = Number.parseInt(row.value, 10);
       if (Number.isFinite(parsed)) {
         (settings as Record<string, unknown>)[row.key] = parsed;
@@ -258,6 +260,7 @@ function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   normalized.vodCrf = clampInt(normalized.vodCrf, 16, 35, defaults.vodCrf);
   if (!VOD_BITRATE_MODES.includes(normalized.vodBitrateMode)) normalized.vodBitrateMode = defaults.vodBitrateMode;
   if (!VOD_AUDIO_MODES.includes(normalized.vodAudioMode)) normalized.vodAudioMode = defaults.vodAudioMode;
+  normalized.transcodeCacheLimitGb = clampInt(normalized.transcodeCacheLimitGb, 1, 2048, defaults.transcodeCacheLimitGb);
   return normalized;
 }
 
