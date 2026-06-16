@@ -48,6 +48,7 @@ export type Library = {
 };
 
 export type LibraryInput = { name: string; slug?: string; type: LibraryMediaType; source?: LibrarySource; mode: LibraryMode; enabled?: boolean; sortOrder?: number; config?: LibraryConfig };
+export type LibraryReorderInput = { orderedIds: string[] };
 export type StremioVideo = { id: string; title: string; released?: string; season?: number; episode?: number; overview?: string; thumbnail?: string };
 export type StremioCatalogMeta = { id: string; type: LibraryMediaType; name: string; tmdbId?: number; poster?: string; background?: string; description?: string; releaseInfo?: string; released?: string; imdbRating?: string; genres?: string[]; runtime?: string; trailers?: Array<{ source: string; type: "Trailer" }>; videos?: StremioVideo[] };
 export type TmdbWatchProvider = { id: number; name: string; logo?: string };
