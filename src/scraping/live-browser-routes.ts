@@ -22,6 +22,7 @@ import {
 const createSchema = z.object({
   name: z.string().trim().min(1).max(200),
   url: z.string().url(),
+  profileKey: z.string().trim().min(1).max(200).optional(),
   mobile: z.boolean().optional(),
   recording: z.boolean().optional(),
   autoAds: z.boolean().optional()
