@@ -1,0 +1,1 @@
+Temporary CI verification marker for tab controls and active challenge detection.
