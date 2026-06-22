@@ -41,7 +41,7 @@ await app.register(cors, { origin: true });
 app.get("/", async (_, reply) => {
   const html = await readFile(join(publicDir, "index.html"), "utf-8");
   const bootstrapTag = '<script src="/auth-bootstrap.js?v=20260622-auth-bootstrap"></script>';
-  const appTag = '<script src="/app.js?v=20260622-auth-bootstrap" type="module"></script>';
+  const appTag = '<script src="/app.js?v=20260622-core-only" type="module"></script>';
   const injected = html.replace(/<script src="\/app\.js[^"]*" type="module"><\/script>/, `${bootstrapTag}\n    ${appTag}`);
   reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
   reply.header("pragma", "no-cache");
@@ -56,7 +56,12 @@ app.get("/auth-bootstrap.js", async (_, reply) => {
   return readFile(join(publicDir, "auth-bootstrap.js"), "utf-8");
 });
 
-app.get("/app.js", async (_, reply) => { const [mainScript, authLoginToggleHelper, addonDeleteHelper, libraryEpisodeIdHelper, animeSubLibraryHelper, libraryAutomationHelper, librarySortHelper, libraryReorderHelper, systemStorageHelper, docchiPublicMappingHelper, docchiDebugExportHelper, vodTranscodeSettingsHelper, vodCrfVisibilityHelper, transcodeDashboardHelper, transcodeCachePanelHelper] = await Promise.all([readFile(join(publicDir, "app.js"), "utf-8"), readFile(join(publicDir, "auth-login-toggle-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-episode-id-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "animesub-library-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-automation-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-sort-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-reorder-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "system-storage-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "docchi-public-mapping-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "docchi-debug-export-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "vod-transcode-settings-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "vod-crf-visibility-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "transcode-dashboard-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "transcode-cache-panel-helper.js"), "utf-8").catch(() => "")]); reply.header("cache-control", "no-store, max-age=0"); reply.type("application/javascript; charset=utf-8"); return `${mainScript}\n\n${authLoginToggleHelper}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}\n\n${animeSubLibraryHelper}\n\n${libraryAutomationHelper}\n\n${librarySortHelper}\n\n${libraryReorderHelper}\n\n${systemStorageHelper}\n\n${docchiPublicMappingHelper}\n\n${docchiDebugExportHelper}\n\n${vodTranscodeSettingsHelper}\n\n${vodCrfVisibilityHelper}\n\n${transcodeDashboardHelper}\n\n${transcodeCachePanelHelper}`; });
+app.get("/app.js", async (_, reply) => {
+  reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
+  reply.type("application/javascript; charset=utf-8");
+  return readFile(join(publicDir, "app.js"), "utf-8");
+});
+
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
 await app.register(async (adminApp) => {
