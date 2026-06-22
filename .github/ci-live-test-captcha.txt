@@ -1,0 +1,1 @@
+Temporary CI verification for visual live tests and CAPTCHA pause.
