@@ -40,9 +40,10 @@ await app.register(cors, { origin: true });
 
 app.get("/", async (_, reply) => {
   const html = await readFile(join(publicDir, "index.html"), "utf-8");
-  const bootstrapTag = '<script src="/auth-bootstrap.js?v=20260622-auth-bootstrap"></script>';
-  const appTag = '<script src="/app.js?v=20260622-core-only" type="module"></script>';
-  const injected = html.replace(/<script src="\/app\.js[^"]*" type="module"><\/script>/, `${bootstrapTag}\n    ${appTag}`);
+  const authBootstrapTag = '<script src="/auth-bootstrap.js?v=20260622-auth-bootstrap"></script>';
+  const panelBootstrapTag = '<script src="/panel-bootstrap.js?v=20260622-panel-bootstrap"></script>';
+  const appTag = '<script src="/app.js?v=20260622-classic-core"></script>';
+  const injected = html.replace(/<script src="\/app\.js[^"]*"[^>]*><\/script>/, `${authBootstrapTag}\n    ${panelBootstrapTag}\n    ${appTag}`);
   reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
   reply.header("pragma", "no-cache");
   reply.header("expires", "0");
@@ -52,13 +53,19 @@ app.get("/", async (_, reply) => {
 
 app.get("/auth-bootstrap.js", async (_, reply) => {
   reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
-  reply.type("application/javascript; charset=utf-8");
+  reply.type("text/javascript; charset=utf-8");
   return readFile(join(publicDir, "auth-bootstrap.js"), "utf-8");
+});
+
+app.get("/panel-bootstrap.js", async (_, reply) => {
+  reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
+  reply.type("text/javascript; charset=utf-8");
+  return readFile(join(publicDir, "panel-bootstrap.js"), "utf-8");
 });
 
 app.get("/app.js", async (_, reply) => {
   reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
-  reply.type("application/javascript; charset=utf-8");
+  reply.type("text/javascript; charset=utf-8");
   return readFile(join(publicDir, "app.js"), "utf-8");
 });
 
