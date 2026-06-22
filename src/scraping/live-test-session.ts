@@ -1,6 +1,7 @@
 import type { Browser, KeyInput, Page } from "puppeteer";
 import { getDatabase } from "../db/database.js";
 import { writeSystemLog } from "../system/system-log.js";
+import { getChromiumLaunchArgs, getCurrentChromiumIdentity, getPersistentChromiumProfileDir } from "./chromium-profile.js";
 import type { ScrapingProgramAction } from "./scraping-engine.js";
 
 const VIDEO_PATTERN = /\.(?:mp4|webm|mkv|mov|avi|flv|wmv|m4v|ts|m3u8|mpd)(?:$|[?#])/i;
@@ -71,6 +72,7 @@ type LiveTestSession = {
   startUrl: string;
   browser: Browser;
   page: Page;
+  browserVersion: string;
   width: number;
   height: number;
   actions: ScrapingProgramAction[];
@@ -114,18 +116,22 @@ export async function createLiveTestSession(programId: string) {
 
   const width = clamp(program.viewport_width, 320, 2560, 1280);
   const height = clamp(program.viewport_height, 240, 1600, 720);
+  const startUrl = validateUrl(program.url);
   const puppeteer = await import("puppeteer");
   const executablePath = process.env.CHROMIUM_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+  const userDataDir = await getPersistentChromiumProfileDir(startUrl);
   const browser = await puppeteer.launch({
     headless: true,
+    userDataDir,
     ...(executablePath ? { executablePath } : {}),
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-extensions", "--no-first-run"]
+    args: getChromiumLaunchArgs()
   });
+  const identity = await getCurrentChromiumIdentity(browser, width < 600);
   const page = await browser.newPage();
   page.setDefaultNavigationTimeout(60_000);
   page.setDefaultTimeout(12_000);
   await page.setViewport({ width, height, isMobile: width < 600, hasTouch: width < 600, deviceScaleFactor: 1 });
-  await page.setUserAgent(program.user_agent?.trim() || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36");
+  await page.setUserAgent(program.user_agent?.trim() || identity.userAgent);
   const headers = parseHeaders(program.headers_json);
   if (Object.keys(headers).length) await page.setExtraHTTPHeaders(headers);
 
@@ -134,9 +140,10 @@ export async function createLiveTestSession(programId: string) {
     id: crypto.randomUUID(),
     programId,
     programName: program.name,
-    startUrl: validateUrl(program.url),
+    startUrl,
     browser,
     page,
+    browserVersion: identity.version,
     width,
     height,
     actions,
@@ -157,7 +164,7 @@ export async function createLiveTestSession(programId: string) {
   };
   sessions.set(session.id, session);
   attachNetworkCollection(session);
-  addEvent(session, "info", `Uruchamianie testu procesu „${program.name}”.`);
+  addEvent(session, "info", `Uruchamianie testu procesu „${program.name}” w Chromium ${identity.version} z trwałym profilem cookies.`);
 
   try {
     await page.goto(session.startUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -542,6 +549,8 @@ function publicState(session: LiveTestSession) {
     programName: session.programName,
     startUrl: session.startUrl,
     url: session.page.url(),
+    browserVersion: session.browserVersion,
+    persistentProfile: true,
     viewportWidth: session.width,
     viewportHeight: session.height,
     status: session.status,
