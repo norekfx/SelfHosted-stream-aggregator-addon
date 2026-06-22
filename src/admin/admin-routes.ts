@@ -21,6 +21,8 @@ import { runTechnicalHealthCheck } from "../system/technical-health.js";
 import { fetchTmdbCatalog, fetchTmdbWatchProviders } from "../tmdb/tmdb-client.js";
 import { getIntelQsvStatus } from "../transcoding/intel-qsv.js";
 import { clearTranscodeCache, enforceTranscodeCacheLimit, getTranscodeCacheReport } from "../transcoding/transcode-cache-manager.js";
+import { getDatabase } from "../db/database.js";
+import { runScraping } from "../scraping/scraping-engine.js";
 
 const registerAddonSchema = z.object({ manifestUrl: z.string().url(), enabled: z.boolean().optional() });
 const aggregateParamsSchema = z.object({ type: z.enum(["movie", "series"]), id: z.string().min(1) });
@@ -71,6 +73,45 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get("/admin/history", async (request, reply) => { const query = limitQuerySchema.safeParse(request.query); if (!query.success) { reply.code(400); return { error: "Invalid history query.", details: query.error.flatten() }; } return { history: listSearchHistory(query.data.limit) }; });
   app.delete("/admin/history", async () => ({ ok: true, deleted: clearSearchHistory() }));
   app.get<{ Params: { id: string } }>("/admin/history/:id", async (request) => ({ details: getSearchHistoryDetails(request.params.id) }));
+  // Scraping routes
+  app.get("/admin/scraping/configs", async () => {
+    const db = getDatabase();
+    const configs = db.prepare("SELECT * FROM scraping_configs ORDER BY created_at DESC").all() as any[];
+    return { configs: configs.map(c => ({ ...c, cloudflare: !!c.cloudflare })) };
+  });
+  app.post("/admin/scraping/configs", async (request, reply) => {
+    const db = getDatabase();
+    const { name, url, cloudflare } = request.body as { name: string; url: string; cloudflare: boolean };
+    if (!name || !url) { reply.code(400); return { error: "Name and URL are required." }; }
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO scraping_configs (id, name, url, cloudflare, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, name, url, cloudflare ? 1 : 0, now, now);
+    writeSystemLog("info", "scraping", "Scraping config created.", { id, name, url, cloudflare });
+    reply.code(201);
+    return { config: { id, name, url, cloudflare, created_at: now, updated_at: now } };
+  });
+  app.delete<{ Params: { id: string } }>("/admin/scraping/configs/:id", async (request, reply) => {
+    const db = getDatabase();
+    const config = db.prepare("SELECT id FROM scraping_configs WHERE id = ?").get(request.params.id) as any;
+    if (!config) { reply.code(404); return { error: "Scraping config not found." }; }
+    db.prepare("DELETE FROM scraping_configs WHERE id = ?").run(request.params.id);
+    writeSystemLog("info", "scraping", "Scraping config deleted.", { id: request.params.id });
+    return { ok: true };
+  });
+  app.post<{ Params: { id: string } }>("/admin/scraping/configs/:id/run", async (request, reply) => {
+    const db = getDatabase();
+    const config = db.prepare("SELECT * FROM scraping_configs WHERE id = ?").get(request.params.id) as any;
+    if (!config) { reply.code(404); return { error: "Scraping config not found." }; }
+    writeSystemLog("info", "scraping", "Starting scraping run.", { id: request.params.id, name: config.name });
+    try {
+      const results = await runScraping(config);
+      return { results };
+    } catch (error: any) {
+      writeSystemLog("error", "scraping", "Scraping failed.", { id: request.params.id, error: error.message });
+      reply.code(500);
+      return { error: error.message };
+    }
+  });
 }
 
 async function fetchAndSaveAnimeSub(type: StreamType, id: string) { const subtitles = await fetchAnimeSubSubtitles(type, id); const localized = await localizeSubtitleResults(type, id, subtitles).catch(() => subtitles); return saveSubtitleCache(type, id, localized); }
