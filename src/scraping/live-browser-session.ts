@@ -1,13 +1,14 @@
 import type { Browser, KeyInput, Page, Target } from "puppeteer";
+import { getChromiumLaunchArgs, getCurrentChromiumIdentity, getPersistentChromiumProfileDir } from "./chromium-profile.js";
 import type { ScrapingProgramAction } from "./scraping-engine.js";
 
 export type RecordedLiveStep = ScrapingProgramAction & { id: string; label: string; createdAt: string };
 export type LiveBrowserEvent = { id: string; type: "info" | "navigation" | "popup" | "ad" | "error"; message: string; url?: string; createdAt: string };
-type ElementInfo = { selector: string | null; tagName: string; editable: boolean; label: string };
+type ElementInfo = { selector: string | null; tagName: string; editable: boolean; sensitive: boolean; label: string };
 type Session = {
   id: string; name: string; startUrl: string; browser: Browser; page: Page;
   recording: boolean; autoAds: boolean; mobile: boolean; width: number; height: number;
-  steps: RecordedLiveStep[]; events: LiveBrowserEvent[]; safeUrls: string[]; adHosts: Set<string>;
+  browserVersion: string; steps: RecordedLiveStep[]; events: LiveBrowserEvent[]; safeUrls: string[]; adHosts: Set<string>;
   createdAt: string; touchedAt: string; closing: boolean;
 };
 
@@ -22,28 +23,30 @@ export async function createLiveBrowser(input: { name: string; url: string; mobi
   const height = mobile ? 844 : 720;
   const puppeteer = await import("puppeteer");
   const executablePath = process.env.CHROMIUM_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+  const userDataDir = await getPersistentChromiumProfileDir(url);
   const browser = await puppeteer.launch({
     headless: true,
+    userDataDir,
     ...(executablePath ? { executablePath } : {}),
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-extensions", "--no-first-run"]
+    args: getChromiumLaunchArgs()
   });
+  const identity = await getCurrentChromiumIdentity(browser, mobile);
   const page = await browser.newPage();
   page.setDefaultNavigationTimeout(60_000);
   page.setDefaultTimeout(20_000);
   await page.setViewport({ width, height, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 1 });
-  await page.setUserAgent(mobile
-    ? "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
-    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36");
+  await page.setUserAgent(identity.userAgent);
 
   const now = new Date().toISOString();
   const session: Session = {
     id: crypto.randomUUID(), name: input.name.trim(), startUrl: url, browser, page,
     recording: input.recording !== false, autoAds: input.autoAds !== false, mobile, width, height,
+    browserVersion: identity.version,
     steps: [], events: [], safeUrls: [], adHosts: new Set(), createdAt: now, touchedAt: now, closing: false
   };
   sessions.set(session.id, session);
   attachListeners(session);
-  addEvent(session, "info", "Uruchomiono zdalne Chromium.", url);
+  addEvent(session, "info", `Uruchomiono Chromium ${identity.version} z trwałym profilem cookies i sesji.`, url);
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await settle(page, 700);
@@ -84,7 +87,11 @@ export async function typeLiveBrowser(id: string, text: string, replace = true) 
     await session.page.keyboard.up("Control"); await session.page.keyboard.press("Backspace");
   }
   await session.page.keyboard.type(text, { delay: 35 });
-  if (session.recording) addStep(session, { actionType: "type", selector: active.selector, value: text, waitMs: 250, label: `Wpisz tekst w ${active.label}` });
+  if (session.recording && active.sensitive) {
+    addEvent(session, "info", "Wpisano hasło. Jego treść nie została zapisana w krokach procesu; zalogowana sesja zostanie zachowana w trwałym profilu Chromium.");
+  } else if (session.recording) {
+    addStep(session, { actionType: "type", selector: active.selector, value: text, waitMs: 250, label: `Wpisz tekst w ${active.label}` });
+  }
   return publicState(session);
 }
 
@@ -192,6 +199,7 @@ function publicState(session: Session) {
   touch(session); return {
     id: session.id, name: session.name, startUrl: session.startUrl, url: session.page.url(),
     recording: session.recording, autoAds: session.autoAds, mobile: session.mobile,
+    browserVersion: session.browserVersion, persistentProfile: true,
     viewportWidth: session.width, viewportHeight: session.height,
     steps: session.steps, events: session.events, createdAt: session.createdAt, touchedAt: session.touchedAt
   };
@@ -212,6 +220,7 @@ async function elementAt(page: Page, x: number, y: number): Promise<ElementInfo 
     return describe(element);
     function describe(node: HTMLElement) {
       const editable = node.matches("input,textarea,[contenteditable='true'],[role='textbox']");
+      const sensitive = node instanceof HTMLInputElement && node.type.toLowerCase() === "password";
       const label = node.getAttribute("placeholder") || node.getAttribute("aria-label") || node.innerText || node.tagName.toLowerCase();
       let selector: string | null = node.id ? `#${CSS.escape(node.id)}` : null;
       const name = node.getAttribute("name");
@@ -221,7 +230,7 @@ async function elementAt(page: Page, x: number, y: number): Promise<ElementInfo 
         const siblings = parent ? [...parent.children].filter((item) => item.tagName === node.tagName) : [];
         selector = `${node.tagName.toLowerCase()}:nth-of-type(${Math.max(1, siblings.indexOf(node) + 1)})`;
       }
-      return { selector, tagName: node.tagName.toLowerCase(), editable, label: String(label).trim().slice(0, 80) };
+      return { selector, tagName: node.tagName.toLowerCase(), editable, sensitive, label: String(label).trim().slice(0, 80) };
     }
   }, { x, y });
 }
@@ -230,6 +239,7 @@ async function activeElement(page: Page): Promise<ElementInfo | null> {
     const node = document.activeElement;
     if (!(node instanceof HTMLElement) || node === document.body) return null;
     const editable = node.matches("input,textarea,[contenteditable='true'],[role='textbox']");
+    const sensitive = node instanceof HTMLInputElement && node.type.toLowerCase() === "password";
     const label = node.getAttribute("placeholder") || node.getAttribute("aria-label") || node.innerText || node.tagName.toLowerCase();
     let selector: string | null = node.id ? `#${CSS.escape(node.id)}` : null;
     const name = node.getAttribute("name");
@@ -239,7 +249,7 @@ async function activeElement(page: Page): Promise<ElementInfo | null> {
       const siblings = parent ? [...parent.children].filter((item) => item.tagName === node.tagName) : [];
       selector = `${node.tagName.toLowerCase()}:nth-of-type(${Math.max(1, siblings.indexOf(node) + 1)})`;
     }
-    return { selector, tagName: node.tagName.toLowerCase(), editable, label: String(label).trim().slice(0, 80) };
+    return { selector, tagName: node.tagName.toLowerCase(), editable, sensitive, label: String(label).trim().slice(0, 80) };
   });
 }
 
