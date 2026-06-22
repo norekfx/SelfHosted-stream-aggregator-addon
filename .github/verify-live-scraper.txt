@@ -1,0 +1,1 @@
+Verify interactive Chromium scraper wizard.
