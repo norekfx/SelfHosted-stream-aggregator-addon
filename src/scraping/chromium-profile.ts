@@ -4,11 +4,12 @@ import { join } from "node:path";
 import type { Browser } from "puppeteer";
 import { env } from "../config/env.js";
 
-export async function getPersistentChromiumProfileDir(profileKey: string, startUrl: string): Promise<string> {
+export async function getPersistentChromiumProfileDir(profileKeyOrUrl: string, optionalStartUrl?: string): Promise<string> {
+  const startUrl = optionalStartUrl ?? profileKeyOrUrl;
   const parsed = new URL(startUrl);
   const host = parsed.hostname.toLowerCase();
   const safeHost = host.replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "site";
-  const key = profileKey.trim() || host;
+  const key = optionalStartUrl ? (profileKeyOrUrl.trim() || host) : host;
   const hash = createHash("sha256").update(key + "|" + host).digest("hex").slice(0, 20);
   const root = join(env.DATA_DIR, "chromium-profiles");
   const directory = join(root, safeHost + "-" + hash);
