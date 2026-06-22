@@ -13,7 +13,7 @@ import {
   skipCurrentLiveTestStep,
   stopLiveTest,
   typeLiveTest
-} from "./live-test-session.js";
+} from "./live-test-session-v2.js";
 
 const clickSchema = z.object({ x: z.coerce.number(), y: z.coerce.number() });
 const typeSchema = z.object({ text: z.string().max(20_000), replace: z.boolean().optional() });
