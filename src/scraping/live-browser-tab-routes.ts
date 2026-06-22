@@ -1,6 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { activateLiveBrowserTab, closeLiveBrowserTab, createLiveBrowserTab } from "./live-browser-session.js";
+import {
+  activateLiveBrowserTab,
+  closeLiveBrowserTab,
+  createLiveBrowserTab,
+  markLiveBrowserAd
+} from "./live-browser-session.js";
 
 const newTabSchema = z.object({ url: z.string().url().optional() });
 
@@ -30,12 +35,22 @@ export async function registerLiveBrowserTabRoutes(app: FastifyInstance): Promis
 
   app.delete<{ Params: { id: string; tabId: string } }>("/admin/scraping/live/:id/tabs/:tabId", async (request, reply) => {
     try {
-      return { session: await closeLiveBrowserTab(request.params.id, request.params.tabId) };
+      await activateLiveBrowserTab(request.params.id, request.params.tabId);
+      try {
+        return { session: await markLiveBrowserAd(request.params.id) };
+      } catch (error) {
+        if (!isMissingClickError(error)) throw error;
+        return { session: await closeLiveBrowserTab(request.params.id, request.params.tabId) };
+      }
     } catch (error) {
       reply.code(409);
       return { error: message(error) };
     }
   });
+}
+
+function isMissingClickError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Najpierw wykonaj kliknięcie");
 }
 
 function message(error: unknown): string {
