@@ -1,0 +1,1 @@
+Temporary CI verification for persistent Chromium profiles and dynamic user agent.
