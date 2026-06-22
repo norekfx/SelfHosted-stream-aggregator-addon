@@ -1,4 +1,12 @@
 import type { Browser, KeyInput, Page, Target } from "puppeteer";
+import {
+  chooseMostSimilarPage,
+  decodeClickMetadata,
+  encodeClickMetadata,
+  isObviousAdUrl,
+  markActionAsExpectedAd,
+  tabLabel
+} from "./browser-tab-strategy.js";
 import { getChromiumLaunchArgs, getCurrentChromiumIdentity, getPersistentChromiumProfileDir } from "./chromium-profile.js";
 import type { ScrapingProgramAction } from "./scraping-engine.js";
 
@@ -11,6 +19,7 @@ type Session = {
   startUrl: string;
   browser: Browser;
   page: Page;
+  userAgent: string;
   recording: boolean;
   autoAds: boolean;
   mobile: boolean;
@@ -22,6 +31,7 @@ type Session = {
   safeUrls: string[];
   adHosts: Set<string>;
   attachedPages: WeakSet<Page>;
+  tabs: Map<string, Page>;
   createdAt: string;
   touchedAt: string;
   closing: boolean;
@@ -56,6 +66,7 @@ export async function createLiveBrowser(input: { name: string; url: string; mobi
     startUrl: url,
     browser,
     page,
+    userAgent: identity.userAgent,
     recording: input.recording !== false,
     autoAds: input.autoAds !== false,
     mobile,
@@ -67,6 +78,7 @@ export async function createLiveBrowser(input: { name: string; url: string; mobi
     safeUrls: [],
     adHosts: new Set(),
     attachedPages: new WeakSet<Page>(),
+    tabs: new Map<string, Page>(),
     createdAt: now,
     touchedAt: now,
     closing: false
@@ -74,7 +86,7 @@ export async function createLiveBrowser(input: { name: string; url: string; mobi
   sessions.set(session.id, session);
   attachBrowserListeners(session);
   attachPageListeners(session, page);
-  addEvent(session, "info", `Uruchomiono Chromium ${identity.version} z trwałym profilem cookies i sesji.`, url);
+  addEvent(session, "info", `Uruchomiono Chromium ${identity.version} z trwałym profilem cookies i obsługą wielu kart.`, url);
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -100,10 +112,56 @@ export async function getLiveBrowserScreenshot(id: string): Promise<Buffer> {
   return Buffer.from(await page.screenshot({ type: "jpeg", quality: 72, fullPage: false, captureBeyondViewport: false }));
 }
 
+export async function createLiveBrowserTab(id: string, url?: string) {
+  const session = requireSession(id);
+  touch(session);
+  const page = await session.browser.newPage();
+  await configurePage(page, session.userAgent, session.mobile, session.width, session.height);
+  attachPageListeners(session, page);
+  session.page = page;
+  await page.bringToFront().catch(() => undefined);
+  if (url) await page.goto(validateUrl(url), { waitUntil: "domcontentloaded", timeout: 60_000 });
+  addEvent(session, "popup", "Utworzono nową kartę.", page.url());
+  return publicState(session);
+}
+
+export async function activateLiveBrowserTab(id: string, tabId: string) {
+  const session = requireSession(id);
+  touch(session);
+  const page = session.tabs.get(tabId);
+  if (!page || page.isClosed()) throw new Error("Wybrana karta już nie istnieje.");
+  session.page = page;
+  await page.bringToFront().catch(() => undefined);
+  addEvent(session, "popup", "Przełączono aktywną kartę.", page.url());
+  return publicState(session);
+}
+
+export async function closeLiveBrowserTab(id: string, tabId: string) {
+  const session = requireSession(id);
+  touch(session);
+  const page = session.tabs.get(tabId);
+  if (!page || page.isClosed()) throw new Error("Wybrana karta już nie istnieje.");
+  const openTabs = [...session.tabs.values()].filter((item) => !item.isClosed());
+  if (openTabs.length <= 1) throw new Error("Nie można zamknąć ostatniej karty.");
+  const wasActive = page === session.page;
+  const referenceUrl = page.url() || session.startUrl;
+  session.tabs.delete(tabId);
+  await page.close().catch(() => undefined);
+  if (wasActive) {
+    const remaining = [...session.tabs.values()].filter((item) => !item.isClosed());
+    session.page = chooseMostSimilarPage(remaining, referenceUrl) || remaining[0]!;
+    await session.page.bringToFront().catch(() => undefined);
+  }
+  addEvent(session, "popup", "Zamknięto kartę.", referenceUrl);
+  return publicState(session);
+}
+
 export async function clickLiveBrowser(id: string, xInput: number, yInput: number) {
   const session = requireSession(id);
   touch(session);
   const page = await ensureActivePage(session);
+  const sourceUrl = page.url();
+  const sourceTabId = getTabId(session, page);
   const x = clamp(xInput, 0, session.width - 1);
   const y = clamp(yInput, 0, session.height - 1);
   const element = await elementAt(page, x, y).catch(() => null);
@@ -114,6 +172,7 @@ export async function clickLiveBrowser(id: string, xInput: number, yInput: numbe
     addStep(session, {
       actionType: "click",
       selector: element?.selector ?? null,
+      value: encodeClickMetadata({ sourceUrl, sourceTabId }),
       x,
       y,
       waitMs: 450,
@@ -121,7 +180,7 @@ export async function clickLiveBrowser(id: string, xInput: number, yInput: numbe
     });
   }
   await settle(page, 220);
-  await selectBestPage(session);
+  await refreshKnownTabs(session);
   await handleAdRedirect(session);
   return { element, state: publicState(session) };
 }
@@ -156,7 +215,7 @@ export async function keyLiveBrowser(id: string, keyInput: string) {
   await page.keyboard.press(key);
   if (session.recording) addStep(session, { actionType: "press", selector: active?.selector ?? null, value: key, waitMs: 400, label: `Klawisz ${key}` });
   await settle(page, 180);
-  await selectBestPage(session);
+  await refreshKnownTabs(session);
   await handleAdRedirect(session);
   return publicState(session);
 }
@@ -221,11 +280,42 @@ export function setLiveBrowserAds(id: string, enabled: boolean) {
 
 export async function markLiveBrowserAd(id: string) {
   const session = requireSession(id);
-  const page = await ensureActivePage(session);
-  const host = safeHost(page.url());
-  if (host) session.adHosts.add(host);
-  addEvent(session, "ad", `Oznaczono jako reklamę: ${host || page.url()}.`, page.url());
-  await returnSafe(session);
+  touch(session);
+  const currentPage = await ensureActivePage(session);
+  const lastClick = [...session.steps].reverse().find((step) => step.actionType === "click");
+  if (!lastClick) throw new Error("Najpierw wykonaj kliknięcie, które może otwierać reklamę.");
+
+  const currentTabId = getTabId(session, currentPage);
+  const existingMeta = decodeClickMetadata(lastClick.value);
+  const sourceUrl = existingMeta.sourceUrl || session.safeUrls.at(-1) || session.startUrl;
+  markActionAsExpectedAd(lastClick, sourceUrl, existingMeta.sourceTabId || currentTabId);
+  if (!lastClick.label.includes("możliwa reklama")) lastClick.label = `${lastClick.label} — możliwa reklama`;
+
+  const currentUrl = currentPage.url();
+  const currentHost = safeHost(currentUrl);
+  if (currentHost) session.adHosts.add(currentHost);
+  await refreshKnownTabs(session);
+
+  const sourcePage = existingMeta.sourceTabId ? session.tabs.get(existingMeta.sourceTabId) : undefined;
+  const otherPages = [...session.tabs.values()].filter((page) => !page.isClosed() && page !== currentPage);
+  const target = chooseMostSimilarPage(otherPages, sourceUrl, sourcePage && sourcePage !== currentPage ? sourcePage : undefined);
+
+  if (target) {
+    const adTabId = getTabId(session, currentPage);
+    session.tabs.delete(adTabId);
+    await currentPage.close().catch(() => undefined);
+    session.page = target;
+    await target.bringToFront().catch(() => undefined);
+    addEvent(session, "ad", `Oznaczono ostatnie kliknięcie jako mogące otworzyć reklamę. Zamknięto kartę i wrócono do najbardziej podobnego adresu.`, target.url());
+  } else {
+    await currentPage.goBack({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => null);
+    if (scoreAgainst(currentPage.url(), sourceUrl) < 1_000) {
+      await currentPage.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
+    }
+    session.page = currentPage;
+    addEvent(session, "ad", "Oznaczono ostatnie kliknięcie jako mogące otworzyć reklamę i przywrócono stronę źródłową.", currentPage.url());
+  }
+  rememberSafe(session);
   return publicState(session);
 }
 
@@ -277,6 +367,7 @@ function attachBrowserListeners(session: Session) {
 }
 
 function attachPageListeners(session: Session, page: Page) {
+  registerTab(session, page);
   if (session.attachedPages.has(page)) return;
   session.attachedPages.add(page);
   page.on("framenavigated", (frame) => {
@@ -289,6 +380,8 @@ function attachPageListeners(session: Session, page: Page) {
   page.on("dialog", (dialog) => void dialog.dismiss().catch(() => undefined));
   page.on("pageerror", (error) => addEvent(session, "error", `Błąd strony: ${short(error.message)}`));
   page.on("close", () => {
+    const tabId = getTabId(session, page);
+    session.tabs.delete(tabId);
     if (page === session.page && !session.closing) void selectBestPage(session);
   });
 }
@@ -297,6 +390,7 @@ async function handlePopup(session: Session, target: Target) {
   if (session.closing || target.type() !== "page" || target === session.page.target()) return;
   const popup = await target.page().catch(() => null);
   if (!popup) return;
+  await configurePage(popup, session.userAgent, session.mobile, session.width, session.height).catch(() => undefined);
   attachPageListeners(session, popup);
   await delay(600);
   if (popup.isClosed()) return;
@@ -305,11 +399,12 @@ async function handlePopup(session: Session, target: Target) {
   const popupHost = safeHost(popupUrl);
   const currentHost = safeHost(session.page.url());
   const markedAd = popupHost && session.adHosts.has(popupHost);
-  const obviousAd = isObviousAdUrl(popupUrl);
 
-  if (session.autoAds && (markedAd || obviousAd)) {
+  if (session.autoAds && (markedAd || isObviousAdUrl(popupUrl))) {
     if (popupHost) session.adHosts.add(popupHost);
-    addEvent(session, "ad", `Zamknięto kartę reklamową: ${popupHost || popupUrl}.`, popupUrl);
+    const tabId = getTabId(session, popup);
+    session.tabs.delete(tabId);
+    addEvent(session, "ad", `Zamknięto rozpoznaną kartę reklamową: ${popupHost || popupUrl}.`, popupUrl);
     await popup.close().catch(() => undefined);
     await session.page.bringToFront().catch(() => undefined);
     return;
@@ -320,31 +415,40 @@ async function handlePopup(session: Session, target: Target) {
   addEvent(
     session,
     "popup",
-    currentHost === popupHost ? "Przełączono na nową kartę serwisu." : "Przełączono na nową kartę logowania lub serwisu.",
+    currentHost === popupHost ? "Przełączono na nową kartę serwisu." : "Otworzono nową kartę. Możesz przełączać ją na pasku kart.",
     popupUrl
   );
   rememberSafe(session);
 }
 
+async function refreshKnownTabs(session: Session) {
+  const pages = await session.browser.pages();
+  for (const page of pages) {
+    if (page.isClosed()) continue;
+    attachPageListeners(session, page);
+  }
+  for (const [tabId, page] of session.tabs) {
+    if (page.isClosed()) session.tabs.delete(tabId);
+  }
+}
+
 async function selectBestPage(session: Session) {
-  const pages = (await session.browser.pages()).filter((page) => !page.isClosed());
+  await refreshKnownTabs(session);
+  const pages = [...session.tabs.values()].filter((page) => !page.isClosed());
   if (!pages.length) throw new Error("Chromium nie ma aktywnej karty.");
-  const candidates = pages.filter((page) => page.url() !== "about:blank");
-  const preferred = [...candidates].reverse().find((page) => !isObviousAdUrl(page.url()) && !session.adHosts.has(safeHost(page.url())));
-  const next = preferred || candidates.at(-1) || pages.at(-1);
-  if (!next) throw new Error("Nie znaleziono aktywnej karty Chromium.");
-  attachPageListeners(session, next);
+  const candidates = pages.filter((page) => page.url() !== "about:blank" && !session.adHosts.has(safeHost(page.url())));
+  const next = chooseMostSimilarPage(candidates.length ? candidates : pages, session.safeUrls.at(-1) || session.startUrl) || pages[0]!;
   if (session.page !== next) {
     session.page = next;
-    addEvent(session, "popup", "Automatycznie przełączono na aktywną kartę.", next.url());
+    addEvent(session, "popup", "Automatycznie przełączono na najbardziej podobną aktywną kartę.", next.url());
   }
   await next.bringToFront().catch(() => undefined);
   return next;
 }
 
 async function ensureActivePage(session: Session) {
+  await refreshKnownTabs(session);
   if (session.page.isClosed()) return selectBestPage(session);
-  await selectBestPage(session).catch(() => session.page);
   return session.page;
 }
 
@@ -380,6 +484,9 @@ function rememberSafe(session: Session) {
 
 function publicState(session: Session) {
   touch(session);
+  const tabs = [...session.tabs.entries()]
+    .filter(([, page]) => !page.isClosed())
+    .map(([id, page], index) => ({ id, url: page.url(), label: tabLabel(page.url(), index), active: page === session.page }));
   return {
     id: session.id,
     name: session.name,
@@ -392,11 +499,23 @@ function publicState(session: Session) {
     persistentProfile: true,
     viewportWidth: session.width,
     viewportHeight: session.height,
+    tabs,
     steps: session.steps,
     events: session.events,
     createdAt: session.createdAt,
     touchedAt: session.touchedAt
   };
+}
+
+function registerTab(session: Session, page: Page) {
+  for (const [id, existing] of session.tabs) if (existing === page) return id;
+  const id = crypto.randomUUID();
+  session.tabs.set(id, page);
+  return id;
+}
+
+function getTabId(session: Session, page: Page) {
+  return registerTab(session, page);
 }
 
 function addStep(session: Session, input: Omit<RecordedLiveStep, "id" | "createdAt" | "sortOrder">) {
@@ -457,9 +576,17 @@ async function activeElement(page: Page): Promise<ElementInfo | null> {
   });
 }
 
-function isObviousAdUrl(value: string) {
-  const lower = value.toLowerCase();
-  return /doubleclick|googlesyndication|googleadservices|adservice|adnxs|popads|popcash|propellerads|onclickads|trafficjunky|exoclick|taboola|outbrain/.test(lower);
+function scoreAgainst(candidate: string, reference: string) {
+  try {
+    const left = new URL(candidate);
+    const right = new URL(reference);
+    if (left.href === right.href) return 10_000;
+    if (left.origin === right.origin) return 4_000;
+    if (left.hostname === right.hostname) return 3_000;
+    return 0;
+  } catch {
+    return 0;
+  }
 }
 
 function requireSession(id: string) {
