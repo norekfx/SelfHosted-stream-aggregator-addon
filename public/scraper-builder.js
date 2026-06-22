@@ -15,6 +15,7 @@
 
   load('/scraper-live-runtime.js?v=20260622-live-runtime')
     .then(() => load('/scraper-live-ui.js?v=20260622-live-ui'))
+    .then(() => load('/scraper-live-test-runtime.js?v=20260622-live-test-runtime'))
     .catch((error) => {
       const section = document.querySelector('#scraping');
       if (section) section.innerHTML = `<article class="panel"><h2>Kreator scraperów</h2><p>${String(error.message || error)}</p></article>`;
