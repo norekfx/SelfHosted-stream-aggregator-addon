@@ -16,6 +16,7 @@ import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shoul
 import { getLibraryAutomationControlStatus, listActiveLibraryAutomationStatuses, listLibraryAutomationStatuses, pauseLibraryAutomation, resumeLibraryAutomation, startLibraryAutomationWorker, stopLibraryAutomation } from "./libraries/library-automation.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import type { StremioCatalogMeta } from "./libraries/types.js";
+import { registerScrapingProgramRoutes } from "./scraping/scraping-program-routes.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { getAddonManifest } from "./stremio/manifest.js";
 import { toStremioSubtitleResponse, getSubtitleCache, getLocalSubtitle, hasUsableSubtitles, saveSubtitleCache } from "./subtitles/subtitle-cache.js";
@@ -43,7 +44,12 @@ app.get("/", async (_, reply) => {
   const authBootstrapTag = '<script src="/auth-bootstrap.js?v=20260622-auth-bootstrap"></script>';
   const panelBootstrapTag = '<script src="/panel-bootstrap.js?v=20260622-panel-bootstrap"></script>';
   const appTag = '<script src="/app.js?v=20260622-classic-core"></script>';
-  const injected = html.replace(/<script src="\/app\.js[^"]*"[^>]*><\/script>/, `${authBootstrapTag}\n    ${panelBootstrapTag}\n    ${appTag}`);
+  const libraryTag = '<script src="/library-ui.js?v=20260622-library-ui"></script>';
+  const scraperTag = '<script src="/scraper-builder.js?v=20260622-chromium-builder"></script>';
+  const injected = html.replace(
+    /<script src="\/app\.js[^"]*"[^>]*><\/script>/,
+    `${authBootstrapTag}\n    ${panelBootstrapTag}\n    ${appTag}\n    ${libraryTag}\n    ${scraperTag}`
+  );
   reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
   reply.header("pragma", "no-cache");
   reply.header("expires", "0");
@@ -51,29 +57,24 @@ app.get("/", async (_, reply) => {
   return injected;
 });
 
-app.get("/auth-bootstrap.js", async (_, reply) => {
+async function sendPublicScript(reply: { header: (name: string, value: string) => unknown; type: (value: string) => unknown }, fileName: string) {
   reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
   reply.type("text/javascript; charset=utf-8");
-  return readFile(join(publicDir, "auth-bootstrap.js"), "utf-8");
-});
+  return readFile(join(publicDir, fileName), "utf-8");
+}
 
-app.get("/panel-bootstrap.js", async (_, reply) => {
-  reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
-  reply.type("text/javascript; charset=utf-8");
-  return readFile(join(publicDir, "panel-bootstrap.js"), "utf-8");
-});
-
-app.get("/app.js", async (_, reply) => {
-  reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
-  reply.type("text/javascript; charset=utf-8");
-  return readFile(join(publicDir, "app.js"), "utf-8");
-});
+app.get("/auth-bootstrap.js", async (_, reply) => sendPublicScript(reply, "auth-bootstrap.js"));
+app.get("/panel-bootstrap.js", async (_, reply) => sendPublicScript(reply, "panel-bootstrap.js"));
+app.get("/app.js", async (_, reply) => sendPublicScript(reply, "app.js"));
+app.get("/library-ui.js", async (_, reply) => sendPublicScript(reply, "addon-delete-helper.js"));
+app.get("/scraper-builder.js", async (_, reply) => sendPublicScript(reply, "scraper-builder.js"));
 
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
 await app.register(async (adminApp) => {
   adminApp.addHook("preHandler", requireAdminAuth);
   await registerAdminRoutes(adminApp);
+  await registerScrapingProgramRoutes(adminApp);
   adminApp.get("/admin/system/storage", async () => ({ storage: getStorageReport() }));
   adminApp.get("/admin/library-automation/status", async () => ({ control: getLibraryAutomationControlStatus(), active: listActiveLibraryAutomationStatuses(), statuses: listLibraryAutomationStatuses() }));
   adminApp.post("/admin/library-automation/pause", async () => { pauseLibraryAutomation(); return { ok: true, control: getLibraryAutomationControlStatus(), active: listActiveLibraryAutomationStatuses() }; });
