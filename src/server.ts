@@ -16,6 +16,7 @@ import { getCachedLibraryItems, getCachedMeta, saveLibraryItems, saveMeta, shoul
 import { getLibraryAutomationControlStatus, listActiveLibraryAutomationStatuses, listLibraryAutomationStatuses, pauseLibraryAutomation, resumeLibraryAutomation, startLibraryAutomationWorker, stopLibraryAutomation } from "./libraries/library-automation.js";
 import { getLibraryForCatalog } from "./libraries/library-registry.js";
 import type { StremioCatalogMeta } from "./libraries/types.js";
+import { registerScrapingProgramRoutes } from "./scraping/scraping-program-routes.js";
 import { getEffectivePublicBaseUrl } from "./settings/app-settings.js";
 import { getAddonManifest } from "./stremio/manifest.js";
 import { toStremioSubtitleResponse, getSubtitleCache, getLocalSubtitle, hasUsableSubtitles, saveSubtitleCache } from "./subtitles/subtitle-cache.js";
@@ -37,12 +38,43 @@ runMigrations(getDatabase());
 startLibraryAutomationWorker();
 const app = Fastify({ logger: { transport: process.env.NODE_ENV === "production" ? undefined : { target: "pino-pretty" } } });
 await app.register(cors, { origin: true });
-app.get("/app.js", async (_, reply) => { const [mainScript, addonDeleteHelper, libraryEpisodeIdHelper, animeSubLibraryHelper, libraryAutomationHelper, librarySortHelper, libraryReorderHelper, systemStorageHelper, docchiPublicMappingHelper, docchiDebugExportHelper, vodTranscodeSettingsHelper, vodCrfVisibilityHelper, transcodeDashboardHelper, transcodeCachePanelHelper] = await Promise.all([readFile(join(publicDir, "app.js"), "utf-8"), readFile(join(publicDir, "addon-delete-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-episode-id-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "animesub-library-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-automation-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-sort-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "library-reorder-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "system-storage-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "docchi-public-mapping-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "docchi-debug-export-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "vod-transcode-settings-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "vod-crf-visibility-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "transcode-dashboard-helper.js"), "utf-8").catch(() => ""), readFile(join(publicDir, "transcode-cache-panel-helper.js"), "utf-8").catch(() => "")]); reply.header("cache-control", "no-store, max-age=0"); reply.type("application/javascript; charset=utf-8"); return `${mainScript}\n\n${addonDeleteHelper}\n\n${libraryEpisodeIdHelper}\n\n${animeSubLibraryHelper}\n\n${libraryAutomationHelper}\n\n${librarySortHelper}\n\n${libraryReorderHelper}\n\n${systemStorageHelper}\n\n${docchiPublicMappingHelper}\n\n${docchiDebugExportHelper}\n\n${vodTranscodeSettingsHelper}\n\n${vodCrfVisibilityHelper}\n\n${transcodeDashboardHelper}\n\n${transcodeCachePanelHelper}`; });
+
+app.get("/", async (_, reply) => {
+  const html = await readFile(join(publicDir, "index.html"), "utf-8");
+  const authBootstrapTag = '<script src="/auth-bootstrap.js?v=20260622-auth-bootstrap"></script>';
+  const panelBootstrapTag = '<script src="/panel-bootstrap.js?v=20260622-panel-bootstrap"></script>';
+  const appTag = '<script src="/app.js?v=20260622-classic-core"></script>';
+  const libraryTag = '<script src="/library-ui.js?v=20260622-library-ui"></script>';
+  const scraperTag = '<script src="/scraper-builder.js?v=20260622-chromium-builder"></script>';
+  const injected = html.replace(
+    /<script src="\/app\.js[^"]*"[^>]*><\/script>/,
+    `${authBootstrapTag}\n    ${panelBootstrapTag}\n    ${appTag}\n    ${libraryTag}\n    ${scraperTag}`
+  );
+  reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
+  reply.header("pragma", "no-cache");
+  reply.header("expires", "0");
+  reply.type("text/html; charset=utf-8");
+  return injected;
+});
+
+async function sendPublicScript(reply: { header: (name: string, value: string) => unknown; type: (value: string) => unknown }, fileName: string) {
+  reply.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0");
+  reply.type("text/javascript; charset=utf-8");
+  return readFile(join(publicDir, fileName), "utf-8");
+}
+
+app.get("/auth-bootstrap.js", async (_, reply) => sendPublicScript(reply, "auth-bootstrap.js"));
+app.get("/panel-bootstrap.js", async (_, reply) => sendPublicScript(reply, "panel-bootstrap.js"));
+app.get("/app.js", async (_, reply) => sendPublicScript(reply, "app.js"));
+app.get("/library-ui.js", async (_, reply) => sendPublicScript(reply, "addon-delete-helper.js"));
+app.get("/scraper-builder.js", async (_, reply) => sendPublicScript(reply, "scraper-builder.js"));
+
 await app.register(fastifyStatic, { root: publicDir, prefix: "/" });
 await app.register(registerAuthRoutes);
 await app.register(async (adminApp) => {
   adminApp.addHook("preHandler", requireAdminAuth);
   await registerAdminRoutes(adminApp);
+  await registerScrapingProgramRoutes(adminApp);
   adminApp.get("/admin/system/storage", async () => ({ storage: getStorageReport() }));
   adminApp.get("/admin/library-automation/status", async () => ({ control: getLibraryAutomationControlStatus(), active: listActiveLibraryAutomationStatuses(), statuses: listLibraryAutomationStatuses() }));
   adminApp.post("/admin/library-automation/pause", async () => { pauseLibraryAutomation(); return { ok: true, control: getLibraryAutomationControlStatus(), active: listActiveLibraryAutomationStatuses() }; });

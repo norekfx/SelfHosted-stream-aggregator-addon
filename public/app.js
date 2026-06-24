@@ -19,7 +19,8 @@ const state = {
   healthReport: null,
   logs: [],
   historyDetails: null,
-  subtitleCache: null
+  subtitleCache: null,
+  scrapingConfigs: []
 };
 
 const titles = {
@@ -30,6 +31,7 @@ const titles = {
   history: ['Historia', 'Pełna historia sprawdzania i wyboru plików.'],
   diagnostics: ['Diagnostyka', 'Ręczne testowanie agregacji dla filmu lub odcinka.'],
   system: ['System', 'Health-check techniczny i logi systemowe.'],
+  scraping: ['Scraping', 'Rekorderek scrapowania stron internetowych.'],
   settings: ['Ustawienia', 'Opcje ułatwiające codzienne używanie i dopasowanie do serwera.'],
   security: ['Bezpieczeństwo', 'Hasło administratora, aktywne sesje i wylogowanie urządzeń.']
 };
@@ -118,14 +120,16 @@ function bindForms() {
     renderSettings(); renderInstall(); toast('Ustawienia zapisane.'); await loadSystemLogs();
   });
   $('#changePasswordForm').addEventListener('submit', async (event) => { event.preventDefault(); await api('/auth/change-password', { method: 'POST', body: { currentPassword: $('#currentPassword').value, newPassword: $('#newPassword').value } }); $('#currentPassword').value = ''; $('#newPassword').value = ''; toast('Hasło zmienione.'); });
+  $('#scrapingForm').addEventListener('submit', async (event) => { event.preventDefault(); const name = $('#scrapingName').value.trim(); const url = $('#scrapingUrl').value.trim(); const cloudflare = $('#scrapingCloudflare').checked; await api('/admin/scraping/configs', { method: 'POST', body: { name, url, cloudflare } }); $('#scrapingName').value = ''; $('#scrapingUrl').value = ''; $('#scrapingCloudflare').checked = false; toast('Scrapowanie dodane.'); await loadScrapingConfigs(); });
+  $('#reloadScrapingBtn').addEventListener('click', loadScrapingConfigs);
 }
 
 async function logout() { await api('/auth/logout', { method: 'POST' }); resetPrivateState(); showAuth(false); }
 async function logoutOtherSessions() { await api('/auth/logout-other-sessions', { method: 'POST' }); toast('Inne sesje zostały wylogowane.'); await loadSessions(); }
 async function logoutAllSessions() { await api('/auth/logout-all-sessions', { method: 'POST' }); resetPrivateState(); showAuth(false); }
-function resetPrivateState() { state.user = null; state.addons = []; state.cache = []; state.history = []; state.sessions = []; state.healthReport = null; state.logs = []; state.historyDetails = null; state.subtitleCache = null; }
+function resetPrivateState() { state.user = null; state.addons = []; state.cache = []; state.history = []; state.sessions = []; state.healthReport = null; state.logs = []; state.historyDetails = null; state.subtitleCache = null; state.scrapingConfigs = []; }
 async function loadAll() { await Promise.allSettled([checkHealth(), loadLanguages(), loadSettings(), loadAddons(), loadCache(), loadHistory(), loadSessions(), loadTechnicalHealth(), loadSystemLogs()]); renderDashboard(); renderInstall(); }
-async function refreshCurrentView() { if (state.view === 'dashboard') await loadAll(); if (state.view === 'install') renderInstall(); if (state.view === 'addons') await loadAddons(); if (state.view === 'cache') await loadCache(); if (state.view === 'history') await loadHistory(); if (state.view === 'system') await Promise.all([loadTechnicalHealth(), loadSystemLogs()]); if (state.view === 'settings') await Promise.all([loadLanguages(), loadSettings()]); if (state.view === 'security') await loadSessions(); }
+async function refreshCurrentView() { if (state.view === 'dashboard') await loadAll(); if (state.view === 'install') renderInstall(); if (state.view === 'addons') await loadAddons(); if (state.view === 'cache') await loadCache(); if (state.view === 'history') await loadHistory(); if (state.view === 'system') await Promise.all([loadTechnicalHealth(), loadSystemLogs()]); if (state.view === 'scraping') await loadScrapingConfigs(); if (state.view === 'settings') await Promise.all([loadLanguages(), loadSettings()]); if (state.view === 'security') await loadSessions(); }
 async function checkHealth() { try { await api('/health'); $('.status-dot').className = 'status-dot ok'; $('#healthLabel').textContent = 'API online'; } catch { $('.status-dot').className = 'status-dot bad'; $('#healthLabel').textContent = 'API offline'; } }
 async function loadLanguages() { try { const data = await api('/admin/languages'); const languages = data.languages ?? []; state.languages = languages.length ? languages : fallbackLanguages; } catch { state.languages = fallbackLanguages; } renderLanguageSelects(); }
 async function loadSettings() { const data = await api('/admin/settings'); state.settings = data.settings; renderSettings(); renderSettingsSummary(); renderInstall(); }
@@ -136,6 +140,8 @@ async function loadHistoryDetails(historyId) { $('#historyDetails').innerHTML = 
 async function loadSessions() { const data = await api('/auth/sessions'); state.sessions = data.sessions ?? []; renderSessions(); }
 async function loadTechnicalHealth() { const data = await api('/admin/system/health'); state.healthReport = data.report; renderTechnicalHealth(); renderInstall(); toast(`Health-check: ${data.report.status}`); }
 async function loadSystemLogs() { const level = $('#logLevelFilter').value; const query = level ? `?level=${encodeURIComponent(level)}&limit=200` : '?limit=200'; const data = await api(`/admin/system/logs${query}`); state.logs = data.logs ?? []; renderSystemLogs(); }
+async function loadScrapingConfigs() { try { const data = await api('/admin/scraping/configs'); state.scrapingConfigs = data.configs ?? []; renderScrapingList(); } catch { state.scrapingConfigs = []; renderScrapingList(); } }
+function renderScrapingList() { if (!state.scrapingConfigs.length) { $('#scrapingList').innerHTML = '<div class="list empty">Brak zapisanych scrapowań.</div>'; return; } $('#scrapingList').innerHTML = table(['Nazwa', 'URL', 'Cloudflare', 'Data', 'Akcje'], state.scrapingConfigs.map((config) => [escapeHtml(config.name), escapeHtml(config.url), config.cloudflare ? badge('tak') : '-', escapeHtml(formatDate(config.createdAt)), `<div class="action-row"><button class="small-btn" data-run-scraping="${config.id}">Uruchom</button><button class="small-btn danger-btn" data-delete-scraping="${config.id}">Usuń</button></div>`])); $$('[data-run-scraping]').forEach((button) => button.addEventListener('click', async () => { await runButtonAction(button, 'Scrapuję...', async () => { const result = await api(`/admin/scraping/configs/${button.dataset.runScraping}/run`, { method: 'POST' }); toast(`Scrapowanie zakończone: ${result.results?.length ?? 0} linków`); await loadScrapingConfigs(); }); })); $$('[data-delete-scraping]').forEach((button) => button.addEventListener('click', async () => { if (confirm('Usunąć to scrapowanie?')) { await api(`/admin/scraping/configs/${button.dataset.deleteScraping}`, { method: 'DELETE' }); toast('Scrapowanie usunięte.'); await loadScrapingConfigs(); } }); } }
 async function clearSystemLogs() { await api('/admin/system/logs', { method: 'DELETE' }); await loadSystemLogs(); toast('Logi wyczyszczone.'); }
 
 async function runDiagnostics() {

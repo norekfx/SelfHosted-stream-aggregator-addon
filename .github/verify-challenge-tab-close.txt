@@ -1,0 +1,1 @@
+Temporary CI marker for conservative challenge detection and manual ad-tab close handling.
