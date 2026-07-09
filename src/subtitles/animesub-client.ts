@@ -16,9 +16,11 @@ const subtitleResponseSchema = z.object({
 }).passthrough();
 
 export type ExternalSubtitle = z.infer<typeof externalSubtitleSchema>;
+export type SubtitleSourceKind = "animesub" | "external";
 
 export type AnimeSubSubtitleFetchResult = {
   addon: RegisteredAddon;
+  sourceKind?: SubtitleSourceKind;
   status: "fulfilled" | "rejected";
   responseTimeMs: number;
   subtitles: ExternalSubtitle[];
@@ -89,11 +91,11 @@ async function fetchAddonSubtitles(addon: RegisteredAddon, type: StreamType, id:
       rewrittenLocalhostUrls: rewrittenCount,
       subtitles: subtitles.slice(0, 20).map(toSubtitleLogSample)
     });
-    return { addon, status: "fulfilled", responseTimeMs: Date.now() - startedAt, subtitles, requestUrl };
+    return { addon, sourceKind: "animesub", status: "fulfilled", responseTimeMs: Date.now() - startedAt, subtitles, requestUrl };
   } catch (error) {
     const message = error instanceof Error && error.name === "AbortError" ? `Subtitle request timed out after ${timeoutMs}ms.` : error instanceof Error ? error.message : "Unknown subtitle request error.";
     writeSystemLog("warn", "animesub", "AnimeSub subtitle request failed.", { addonId: addon.id, addonName: addon.name, type, id, requestUrl, responseTimeMs: Date.now() - startedAt, error: message });
-    return { addon, status: "rejected", responseTimeMs: Date.now() - startedAt, subtitles: [], error: message, requestUrl };
+    return { addon, sourceKind: "animesub", status: "rejected", responseTimeMs: Date.now() - startedAt, subtitles: [], error: message, requestUrl };
   } finally {
     clearTimeout(timeout);
   }
