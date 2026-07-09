@@ -65,6 +65,32 @@ const baseManifest = {
       }))
     },
     {
+      key: "forwardExternalSubtitles",
+      type: "checkbox",
+      title: "Przekazuj napisy od innych addonów",
+      default: true
+    },
+    {
+      key: "forwardedSubtitleMode",
+      type: "select",
+      title: "Napisy",
+      default: "language",
+      options: [
+        { value: "all", label: "Wszystkie" },
+        { value: "language", label: "Tylko wybrany język" }
+      ]
+    },
+    {
+      key: "forwardedSubtitleLanguage",
+      type: "select",
+      title: "Język napisów do przekazywania",
+      default: DEFAULT_PREFERRED_LANGUAGE,
+      options: EUROPEAN_LANGUAGES.map((language) => ({
+        value: language.code,
+        label: `${language.nativeName} / ${language.englishName}`
+      }))
+    },
+    {
       key: "transcodeBufferPreset",
       type: "select",
       title: "Transcode buffer",
