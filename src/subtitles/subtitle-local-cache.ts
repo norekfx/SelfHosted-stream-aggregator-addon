@@ -14,41 +14,61 @@ export type LocalCachedSubtitle = ExternalSubtitle & {
   localContentType?: string;
   localBytes?: number;
   localError?: string;
+  passThroughOriginal?: boolean;
 };
 
-export async function localizeSubtitleResults(type: StreamType, mediaId: string, results: AnimeSubSubtitleFetchResult[]): Promise<AnimeSubSubtitleFetchResult[]> {
+export type SubtitleLocalizationOptions = {
+  passThroughOriginal?: boolean;
+};
+
+export async function localizeSubtitleResults(type: StreamType, mediaId: string, results: AnimeSubSubtitleFetchResult[], options: SubtitleLocalizationOptions = {}): Promise<AnimeSubSubtitleFetchResult[]> {
   const localizedResults: AnimeSubSubtitleFetchResult[] = [];
+  let globalIndex = 0;
   for (const result of results) {
     const localizedSubtitles: ExternalSubtitle[] = [];
-    for (let index = 0; index < result.subtitles.length; index += 1) localizedSubtitles.push(await localizeSubtitle(type, mediaId, result.subtitles[index], index, result.requestUrl));
+    for (const subtitle of result.subtitles) {
+      localizedSubtitles.push(await localizeSubtitle(type, mediaId, subtitle, globalIndex, result.requestUrl, options));
+      globalIndex += 1;
+    }
     localizedResults.push({ ...result, subtitles: localizedSubtitles });
   }
   return localizedResults;
 }
 
 export function toPublicSubtitle(subtitle: LocalCachedSubtitle, publicBaseUrl: string): ExternalSubtitle {
-  const { localContent, localContentType, localBytes, localError, localPath, localFormat, originalFormat, originalUrl, ...external } = subtitle;
+  const { localContent, localContentType, localBytes, localError, localPath, localFormat, originalFormat, originalUrl, passThroughOriginal, ...external } = subtitle;
   if (localPath && localContent) return { ...external, id: external.id ? `${external.id}-vtt` : undefined, name: external.name ? `${external.name} (WebVTT local)` : "WebVTT local", url: `${publicBaseUrl}${localPath}` };
   return external;
 }
 
+export function toOriginalSubtitle(subtitle: LocalCachedSubtitle): ExternalSubtitle | undefined {
+  const { localContent, localContentType, localBytes, localError, localPath, localFormat, originalFormat, originalUrl, passThroughOriginal, ...external } = subtitle;
+  const url = originalUrl ?? external.url;
+  if (!url) return undefined;
+  return { ...external, id: external.id ? `${external.id}-original` : undefined, name: external.name ? `${external.name} (oryginalne)` : "Oryginalne napisy", url };
+}
+
 export function getLocalSubtitleContent(subtitle: LocalCachedSubtitle | undefined): { content: string; contentType: string } | undefined { if (!subtitle?.localContent) return undefined; return { content: subtitle.localContent, contentType: subtitle.localContentType ?? "text/vtt; charset=utf-8" }; }
 
-async function localizeSubtitle(type: StreamType, mediaId: string, subtitle: ExternalSubtitle | undefined, index: number, requestUrl: string): Promise<ExternalSubtitle> {
-  if (!subtitle?.url) return subtitle ?? {};
+async function localizeSubtitle(type: StreamType, mediaId: string, subtitle: ExternalSubtitle | undefined, index: number, requestUrl: string, options: SubtitleLocalizationOptions): Promise<ExternalSubtitle> {
+  if (!subtitle?.url) return markPassThrough(subtitle ?? {}, options);
   const startedAt = Date.now();
   const originalFormat = inferSubtitleFormat(subtitle.url, subtitle.name);
   try {
     const downloaded = await downloadSubtitleText(subtitle.url);
     const localContent = convertToWebVtt(downloaded.text, originalFormat);
     const localPath = `/subtitles/local/${encodeURIComponent(type)}/${encodeURIComponent(mediaId)}/${index}.vtt`;
-    writeSystemLog("info", "animesub", "Subtitle converted and cached locally.", { type, mediaId, index, subtitleId: subtitle.id, originalFormat, localFormat: "vtt", originalBytes: downloaded.bytes, localBytes: Buffer.byteLength(localContent, "utf8"), responseTimeMs: Date.now() - startedAt, requestUrl });
-    return { ...subtitle, originalUrl: (subtitle as LocalCachedSubtitle).originalUrl ?? subtitle.url, originalFormat, localFormat: "vtt", localPath, localContent, localContentType: "text/vtt; charset=utf-8", localBytes: Buffer.byteLength(localContent, "utf8") } as LocalCachedSubtitle;
+    writeSystemLog("info", "subtitles", "Subtitle converted and cached locally.", { type, mediaId, index, subtitleId: subtitle.id, originalFormat, localFormat: "vtt", originalBytes: downloaded.bytes, localBytes: Buffer.byteLength(localContent, "utf8"), responseTimeMs: Date.now() - startedAt, requestUrl });
+    return { ...markPassThrough(subtitle, options), originalUrl: (subtitle as LocalCachedSubtitle).originalUrl ?? subtitle.url, originalFormat, localFormat: "vtt", localPath, localContent, localContentType: "text/vtt; charset=utf-8", localBytes: Buffer.byteLength(localContent, "utf8") } as LocalCachedSubtitle;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    writeSystemLog("warn", "animesub", "Subtitle local conversion failed; keeping diagnostic record only.", { type, mediaId, index, subtitleId: subtitle.id, originalFormat, error: message, responseTimeMs: Date.now() - startedAt, requestUrl });
-    return { ...subtitle, originalUrl: (subtitle as LocalCachedSubtitle).originalUrl ?? subtitle.url, originalFormat, localError: message } as LocalCachedSubtitle;
+    writeSystemLog("warn", "subtitles", "Subtitle local conversion failed; keeping diagnostic record.", { type, mediaId, index, subtitleId: subtitle.id, originalFormat, error: message, responseTimeMs: Date.now() - startedAt, requestUrl });
+    return { ...markPassThrough(subtitle, options), originalUrl: (subtitle as LocalCachedSubtitle).originalUrl ?? subtitle.url, originalFormat, localError: message } as LocalCachedSubtitle;
   }
+}
+
+function markPassThrough(subtitle: ExternalSubtitle, options: SubtitleLocalizationOptions): ExternalSubtitle {
+  return options.passThroughOriginal ? { ...subtitle, passThroughOriginal: true } as ExternalSubtitle : subtitle;
 }
 
 async function downloadSubtitleText(url: string): Promise<{ text: string; bytes: number }> {
