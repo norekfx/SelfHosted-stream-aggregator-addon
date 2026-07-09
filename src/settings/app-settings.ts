@@ -14,10 +14,14 @@ export type VodQualityMode = "disabled" | "enabled" | "auto";
 export type VodBitrateMode = "auto" | "250" | "500" | "800" | "1200" | "1800" | "2500" | "3500" | "5000" | "8000" | "12000" | "18000";
 export type VodAudioMode = "aac" | "copy" | "disabled";
 export type IntelQsvMode = "disabled" | "encode" | "decode_encode";
+export type ForwardedSubtitleMode = "all" | "language";
 
 export type AppSettings = {
   preferredAudioLanguage: string;
   preferredSubtitleLanguage: string;
+  forwardExternalSubtitles: boolean;
+  forwardedSubtitleMode: ForwardedSubtitleMode;
+  forwardedSubtitleLanguage: string;
   preferDebrid: boolean;
   detectDebridPlaceholders: boolean;
   debridPlaceholderValidationMode: LinkValidationMode;
@@ -81,10 +85,14 @@ export const METADATA_SYNC_INTERVALS = [0, 10, 30, 60, 120, 240, 480, 720, 1440]
 export const DOCCHI_PUBLIC_MAPPING_MODES = ["disabled", "animation_series", "series", "all"] as const;
 export const DOCCHI_KOMETA_ANIME_IDS_REFRESH_INTERVALS = ["daily", "weekly", "biweekly", "monthly", "once"] as const;
 export const DOCCHI_STREAM_FORCE_MODES = ["enabled", "disabled", "partial"] as const;
+export const FORWARDED_SUBTITLE_MODES = ["all", "language"] as const;
 
 const defaults: AppSettings = {
   preferredAudioLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferredSubtitleLanguage: DEFAULT_PREFERRED_LANGUAGE,
+  forwardExternalSubtitles: true,
+  forwardedSubtitleMode: "language",
+  forwardedSubtitleLanguage: DEFAULT_PREFERRED_LANGUAGE,
   preferDebrid: true,
   detectDebridPlaceholders: false,
   debridPlaceholderValidationMode: "best",
@@ -148,7 +156,7 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "preferDebrid" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails" || row.key === "docchiKometaAnimeIdsEnabled" || row.key === "vodAdaptiveBatchEnabled") {
+    if (row.key === "preferDebrid" || row.key === "forwardExternalSubtitles" || row.key === "detectDebridPlaceholders" || row.key === "debridPlaceholderCompareDeclaredSize" || row.key === "autoRefreshCache" || row.key === "showDiagnosticDetails" || row.key === "docchiKometaAnimeIdsEnabled" || row.key === "vodAdaptiveBatchEnabled") {
       (settings as Record<string, unknown>)[row.key] = row.value === "true";
       continue;
     }
@@ -158,7 +166,7 @@ export function getAppSettings(): AppSettings {
       continue;
     }
 
-    if (row.key === "preferredAudioLanguage" || row.key === "preferredSubtitleLanguage") {
+    if (row.key === "preferredAudioLanguage" || row.key === "preferredSubtitleLanguage" || row.key === "forwardedSubtitleLanguage") {
       const value = normalizeLanguageCode(row.value);
       settings[row.key] = value;
       continue;
@@ -187,7 +195,7 @@ export function updateAppSettings(input: Partial<AppSettings>): AppSettings {
         continue;
       }
 
-      if (key === "preferredAudioLanguage" || key === "preferredSubtitleLanguage") {
+      if (key === "preferredAudioLanguage" || key === "preferredSubtitleLanguage" || key === "forwardedSubtitleLanguage") {
         value = normalizeLanguageCode(String(value)) as never;
       }
 
@@ -247,6 +255,9 @@ export function getKometaAnimeIdsRefreshTtlMs(): number {
 
 function normalizeTranscodeSettings(settings: AppSettings): AppSettings {
   const normalized = { ...settings };
+  normalized.forwardExternalSubtitles = Boolean(normalized.forwardExternalSubtitles);
+  if (!FORWARDED_SUBTITLE_MODES.includes(normalized.forwardedSubtitleMode)) normalized.forwardedSubtitleMode = defaults.forwardedSubtitleMode;
+  normalized.forwardedSubtitleLanguage = normalizeLanguageCode(normalized.forwardedSubtitleLanguage);
   if (!TRANSCODE_MODES.includes(normalized.transcodeMode)) normalized.transcodeMode = defaults.transcodeMode;
   if (!INTEL_QSV_MODES.includes(normalized.liveIntelQsvMode)) normalized.liveIntelQsvMode = defaults.liveIntelQsvMode;
   if (!INTEL_QSV_MODES.includes(normalized.vodIntelQsvMode)) normalized.vodIntelQsvMode = defaults.vodIntelQsvMode;
