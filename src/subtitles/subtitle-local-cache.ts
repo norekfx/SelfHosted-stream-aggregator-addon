@@ -19,11 +19,12 @@ export type LocalCachedSubtitle = ExternalSubtitle & {
 
 export type SubtitleLocalizationOptions = {
   passThroughOriginal?: boolean;
+  startIndex?: number;
 };
 
 export async function localizeSubtitleResults(type: StreamType, mediaId: string, results: AnimeSubSubtitleFetchResult[], options: SubtitleLocalizationOptions = {}): Promise<AnimeSubSubtitleFetchResult[]> {
   const localizedResults: AnimeSubSubtitleFetchResult[] = [];
-  let globalIndex = 0;
+  let globalIndex = options.startIndex ?? 0;
   for (const result of results) {
     const localizedSubtitles: ExternalSubtitle[] = [];
     for (const subtitle of result.subtitles) {
