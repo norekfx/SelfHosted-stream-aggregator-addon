@@ -13,7 +13,7 @@ import {
   saveAggregationResult
 } from "./search-cache.js";
 
-const activeRefreshes = new Set<string>();
+const activeRefreshes = new Map<string, Promise<AggregatedStream | null>>();
 const FRESH_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const STALE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
@@ -63,14 +63,19 @@ export async function getBestOriginalWithCache(type: StreamType, id: string): Pr
   return refreshNow(type, id);
 }
 
-export async function refreshNow(type: StreamType, id: string): Promise<AggregatedStream | null> {
+export function refreshNow(type: StreamType, id: string): Promise<AggregatedStream | null> {
   const refreshKey = `${type}:${id}`;
-  if (activeRefreshes.has(refreshKey)) {
-    const cached = getCachedSearchResult(type, id);
-    return cached?.selectedOriginal ?? null;
+  const activeRefresh = activeRefreshes.get(refreshKey);
+  if (activeRefresh) {
+    return activeRefresh;
   }
 
-  activeRefreshes.add(refreshKey);
+  const refresh = performRefresh(type, id, refreshKey);
+  activeRefreshes.set(refreshKey, refresh);
+  return refresh;
+}
+
+async function performRefresh(type: StreamType, id: string, refreshKey: string): Promise<AggregatedStream | null> {
   markRefreshStarted(type, id);
 
   try {
