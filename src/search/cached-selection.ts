@@ -3,6 +3,7 @@ import { getAppSettings } from "../settings/app-settings.js";
 import { aggregateStreams } from "../streams/aggregation.js";
 import { saveSelectedOriginal } from "../streams/original-store.js";
 import type { AggregatedStream, StreamType } from "../streams/types.js";
+import { validateStream } from "../streams/validate-stream-url.js";
 import { writeSystemLog } from "../system/system-log.js";
 import {
   getCachedSearchResult,
@@ -13,20 +14,50 @@ import {
 } from "./search-cache.js";
 
 const activeRefreshes = new Set<string>();
+const FRESH_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+const STALE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export async function getBestOriginalWithCache(type: StreamType, id: string): Promise<AggregatedStream | null> {
   const cached = getCachedSearchResult(type, id);
   const settings = getAppSettings();
 
   if (cached?.selectedOriginal && cached.status === "working") {
-    saveSelectedOriginal(cached.selectedOriginal);
-    markCacheServed(type, id);
+    const cacheAgeMs = getCacheAgeMs(cached.updatedAt);
 
-    if (settings.autoRefreshCache) {
-      refreshInBackground(type, id);
+    if (cacheAgeMs < FRESH_CACHE_MAX_AGE_MS) {
+      return serveCachedOriginal(type, id, cached.selectedOriginal);
     }
 
-    return cached.selectedOriginal;
+    if (cacheAgeMs <= STALE_CACHE_MAX_AGE_MS) {
+      const original = serveCachedOriginal(type, id, cached.selectedOriginal);
+      if (settings.autoRefreshCache) {
+        refreshInBackground(type, id);
+      }
+      return original;
+    }
+
+    const validation = await validateStream(
+      { url: cached.selectedOriginal.originalUrl },
+      settings.streamValidationTimeoutMs
+    );
+
+    if (validation.status === "working") {
+      const original = serveCachedOriginal(type, id, cached.selectedOriginal);
+      if (settings.autoRefreshCache) {
+        refreshInBackground(type, id);
+      }
+      return original;
+    }
+
+    writeSystemLog("warn", "cache-revalidation", "Cached stream failed stale-cache validation. Refreshing before serving.", {
+      type,
+      id,
+      cacheAgeMs,
+      validationStatus: validation.status,
+      validationMethod: validation.method,
+      validationReason: validation.reason,
+      httpStatus: validation.httpStatus
+    });
   }
 
   return refreshNow(type, id);
@@ -84,6 +115,21 @@ function refreshInBackground(type: StreamType, id: string): void {
   void refreshNow(type, id).catch(() => {
     // Error is persisted by refreshNow. Do not fail the user's cached response.
   });
+}
+
+function serveCachedOriginal(type: StreamType, id: string, original: AggregatedStream): AggregatedStream {
+  saveSelectedOriginal(original);
+  markCacheServed(type, id);
+  return original;
+}
+
+function getCacheAgeMs(updatedAt: string): number {
+  const updatedAtMs = Date.parse(updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.max(0, Date.now() - updatedAtMs);
 }
 
 function toAggregatedStream(type: StreamType, id: string, selectedOriginal: NonNullable<Awaited<ReturnType<typeof aggregateStreams>>["selectedOriginal"]>): AggregatedStream | null {
